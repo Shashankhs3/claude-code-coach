@@ -190,6 +190,70 @@ class TestMigrations(TempDbTestCase):
         total = sum(r["score"] for r in rows) + 10
         self.assertEqual(total, 83)
 
+    def test_insert_prompt_works_after_migrating_legacy_schema(self):
+        """Regression test for a real bug: a database carried forward from
+        the V2 prototype keeps its old NOT NULL, no-default columns
+        (created_at, good_count, warning_count, opportunities) even after
+        migration adds the V3 columns alongside them — migrations.py never
+        drops columns. insert_prompt() used to build a fixed column list
+        that never populated those legacy columns, so every save on such a
+        database failed with `sqlite3.IntegrityError: NOT NULL constraint
+        failed: prompts.created_at` — Analyze & Save silently did nothing
+        in the GUI. This exercises the actual insert_prompt() path (not
+        just ensure_schema()) against a migrated legacy table.
+        """
+        conn = sqlite3.connect(db_module.DB_PATH)
+        conn.execute(
+            """
+            CREATE TABLE prompts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                score TEXT NOT NULL,
+                rating TEXT NOT NULL,
+                good_count INTEGER NOT NULL,
+                warning_count INTEGER NOT NULL,
+                opportunities TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        conn = sqlite3.connect(db_module.DB_PATH)
+        ensure_schema(conn)
+        conn.close()
+
+        row = {
+            "timestamp": "2026-01-01T00:00:00",
+            "prompt": "Fix the login timeout bug in src/auth/login.ts.",
+            "score": 70,
+            "rating": "needs_improvement",
+            "task_type": "debugging",
+            "goal_status": "ok", "scope_status": "ok",
+            "investigation_status": "na", "constraints_status": "warn",
+            "done_status": "warn", "output_status": "na",
+            "good": ["A concrete target named."],
+            "warnings": ["No constraints given."],
+            "opportunities": [],
+            "breadth_level": 1,
+            "context_flag": "",
+        }
+        # Must not raise sqlite3.IntegrityError.
+        new_id = db_module.insert_prompt(row)
+        self.assertIsInstance(new_id, int)
+
+        saved = db_module.fetch_all_prompts()
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["prompt"], row["prompt"])
+
+        # The legacy created_at column must have been backfilled (satisfying
+        # its own NOT NULL constraint) rather than left for SQLite to reject.
+        conn = sqlite3.connect(db_module.DB_PATH)
+        legacy = conn.execute("SELECT created_at FROM prompts WHERE id = ?", (new_id,)).fetchone()
+        conn.close()
+        self.assertEqual(legacy[0], row["timestamp"])
+
     def test_v2_style_db_gets_v3_environment_tables_too(self):
         conn = sqlite3.connect(db_module.DB_PATH)
         conn.execute(

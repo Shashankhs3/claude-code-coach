@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QObject, QThread
 
 from claude_code_coach import database as db
 from claude_code_coach.analyzer import AnalysisResult, analyze_prompt
@@ -88,8 +88,16 @@ def _snapshot_from_cached_row(row: dict) -> EnvironmentSnapshot:
     )
 
 
-class CoachController:
+class CoachController(QObject):
+    """A QObject (not just a plain class) specifically so
+    scan_environment_async()'s worker-thread signals can be connected to a
+    receiver with real main-thread affinity — see that method's docstring.
+    Nothing else about this class depends on being a QObject; every other
+    method is plain Python exactly as before.
+    """
+
     def __init__(self):
+        super().__init__()
         self.session = NullSessionProvider()
 
         project_root = db.get_setting("project_root")
@@ -114,6 +122,8 @@ class CoachController:
         self._navigation_callback = None
         self._scan_thread: QThread | None = None
         self._scan_worker: EnvironmentScanWorker | None = None
+        self._scan_on_done = None
+        self._scan_on_error = None
 
     # -- page registry --------------------------------------------------
     def register(self, page) -> None:
@@ -237,6 +247,28 @@ class CoachController:
         """Scan on a background thread so the UI stays responsive.
 
         Returns False (and does nothing) if a scan is already running.
+
+        worker.finished/failed are emitted on the background thread and
+        are connected to real bound methods of `self` (_on_scan_finished/
+        _on_scan_failed) rather than to plain local closures. That's not
+        cosmetic: CoachController is a QObject that is never moved off the
+        main thread, so Qt's AutoConnection can see the emitter (worker,
+        on the background thread) and receiver (self, on the main thread)
+        have different thread affinities and correctly delivers the call
+        via a real queued connection, processed on the main thread's event
+        loop. A plain Python closure has no thread affinity of its own for
+        Qt to compare against, so a connection to one resolves to Direct
+        and runs ON the worker thread instead — which is what used to
+        happen here, and is what caused every widget update inside
+        refresh_all() (reached via on_done) to be an illegal cross-thread
+        QObject operation: the real cause of the repeated
+        "QObject::setParent: Cannot set parent, new parent is in a
+        different thread" warnings, "QThread: Destroyed while thread ''
+        is still running", and an associated native crash risk — not just
+        a cosmetic warning. (Forcing Qt.QueuedConnection onto the old
+        plain-closure connection was tried and made things worse: with no
+        QObject receiver to attach the queued event to, delivery never
+        happened at all and the scan appeared to hang forever.)
         """
         if self._scan_thread is not None and self._scan_thread.isRunning():
             return False
@@ -246,29 +278,64 @@ class CoachController:
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
 
-        def _handle_done(snapshot: EnvironmentSnapshot) -> None:
-            self.environment_snapshot = snapshot
-            try:
-                db.save_environment_snapshot(snapshot)
-            except Exception:  # noqa: BLE001 - persistence failure shouldn't hide the scan result
-                pass
-            thread.quit()
-            if on_done:
-                on_done(snapshot)
+        # Only one scan can be in flight at a time (guarded by the early
+        # return above), so stashing this call's callbacks on self is safe
+        # for _on_scan_finished/_on_scan_failed to pick up later.
+        self._scan_on_done = on_done
+        self._scan_on_error = on_error
 
-        def _handle_error(message: str) -> None:
-            thread.quit()
-            if on_error:
-                on_error(message)
-
-        worker.finished.connect(_handle_done)
-        worker.failed.connect(_handle_error)
+        worker.finished.connect(self._on_scan_finished)
+        worker.failed.connect(self._on_scan_failed)
+        # thread.finished is the real Qt lifecycle signal — emitted right as
+        # the underlying OS thread is actually about to stop, unlike
+        # worker.finished/failed above (which only mean "the scan produced
+        # a result"; thread.quit() has been asked for but the thread may
+        # not have stopped yet). _on_scan_thread_finished is connected
+        # FIRST so it runs before thread.deleteLater() below, on the same
+        # queued delivery to the main thread — see that method's docstring
+        # for why the ordering here matters.
+        thread.finished.connect(self._on_scan_thread_finished)
         thread.finished.connect(thread.deleteLater)
 
         self._scan_thread = thread
         self._scan_worker = worker
         thread.start()
         return True
+
+    def _on_scan_finished(self, snapshot: EnvironmentSnapshot) -> None:
+        self.environment_snapshot = snapshot
+        try:
+            db.save_environment_snapshot(snapshot)
+        except Exception:  # noqa: BLE001 - persistence failure shouldn't hide the scan result
+            pass
+        if self._scan_thread is not None:
+            self._scan_thread.quit()
+        on_done, self._scan_on_done = self._scan_on_done, None
+        if on_done:
+            on_done(snapshot)
+
+    def _on_scan_thread_finished(self) -> None:
+        """Only safe point to drop the last Python reference to the scan's
+        QThread. Clearing _scan_thread earlier — e.g. right inside
+        _on_scan_finished, as this code used to — drops the reference
+        while the OS thread `thread.quit()` just asked to stop may still
+        actually be finishing, which is exactly what "QThread: Destroyed
+        while thread '' is still running" (and, separately, a stale
+        C++-side reference — "libshiboken: Internal C++ object already
+        deleted" from a later is_scanning() call) came from. Waiting for
+        the real thread.finished signal guarantees the underlying thread
+        has actually stopped before anything drops or observes this
+        reference again.
+        """
+        self._scan_thread = None
+        self._scan_worker = None
+
+    def _on_scan_failed(self, message: str) -> None:
+        if self._scan_thread is not None:
+            self._scan_thread.quit()
+        on_error, self._scan_on_error = self._scan_on_error, None
+        if on_error:
+            on_error(message)
 
     def is_scanning(self) -> bool:
         return self._scan_thread is not None and self._scan_thread.isRunning()

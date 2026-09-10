@@ -82,34 +82,63 @@ def insert_prompt(record: dict) -> int:
     """Insert one analyzed prompt. `record` uses AnalysisResult.to_row()."""
     with get_connection() as conn:
         ensure_schema(conn)
+
+        columns = [
+            "timestamp", "prompt", "score", "rating", "task_type",
+            "goal_status", "scope_status", "investigation_status",
+            "constraints_status", "done_status", "output_status",
+            "good_json", "warnings_json", "opportunities_json",
+            "breadth_level", "context_flag",
+        ]
+        values: list[Any] = [
+            record["timestamp"],
+            record["prompt"],
+            safe_score(record.get("score")),
+            record.get("rating", ""),
+            record.get("task_type", ""),
+            record.get("goal_status", ""),
+            record.get("scope_status", ""),
+            record.get("investigation_status", ""),
+            record.get("constraints_status", ""),
+            record.get("done_status", ""),
+            record.get("output_status", ""),
+            json.dumps(record.get("good", [])),
+            json.dumps(record.get("warnings", [])),
+            json.dumps(record.get("opportunities", [])),
+            int(record.get("breadth_level", 0) or 0),
+            record.get("context_flag", "") or "",
+        ]
+
+        # A database carried forward from the V2 prototype (claude_coach.py)
+        # can still physically have extra NOT NULL, no-default legacy
+        # columns this INSERT never otherwise touches — e.g. 'created_at'
+        # (superseded by 'timestamp'), 'good_count'/'warning_count'
+        # (superseded by good_json/warnings_json), 'opportunities'
+        # (superseded by opportunities_json). migrations.py deliberately
+        # never drops columns (additive-only migration policy elsewhere in
+        # this file), so satisfy whatever legacy column is still present
+        # with a sensible value instead of letting the insert fail with
+        # "NOT NULL constraint failed" — this was a real, 100%-reproducible
+        # bug for any user whose database predates the V3 schema.
+        legacy_defaults: dict[str, Any] = {
+            "created_at": record["timestamp"],
+            "good_count": len(record.get("good", [])),
+            "warning_count": len(record.get("warnings", [])),
+            "opportunities": "",
+        }
+        known = set(columns)
+        for _cid, name, col_type, notnull, default, _pk in conn.execute(
+            "PRAGMA table_info(prompts)"
+        ):
+            if name in known or name == "id" or not notnull or default is not None:
+                continue
+            columns.append(name)
+            values.append(legacy_defaults.get(name, 0 if col_type.upper() == "INTEGER" else ""))
+
+        placeholders = ", ".join("?" for _ in columns)
         cur = conn.execute(
-            """
-            INSERT INTO prompts (
-                timestamp, prompt, score, rating, task_type,
-                goal_status, scope_status, investigation_status,
-                constraints_status, done_status, output_status,
-                good_json, warnings_json, opportunities_json,
-                breadth_level, context_flag
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record["timestamp"],
-                record["prompt"],
-                safe_score(record.get("score")),
-                record.get("rating", ""),
-                record.get("task_type", ""),
-                record.get("goal_status", ""),
-                record.get("scope_status", ""),
-                record.get("investigation_status", ""),
-                record.get("constraints_status", ""),
-                record.get("done_status", ""),
-                record.get("output_status", ""),
-                json.dumps(record.get("good", [])),
-                json.dumps(record.get("warnings", [])),
-                json.dumps(record.get("opportunities", [])),
-                int(record.get("breadth_level", 0) or 0),
-                record.get("context_flag", "") or "",
-            ),
+            f"INSERT INTO prompts ({', '.join(columns)}) VALUES ({placeholders})",
+            values,
         )
         conn.commit()
         return cur.lastrowid

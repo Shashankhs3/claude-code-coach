@@ -321,6 +321,67 @@ class TestIndividualPages(GuiTestCase):
         page = Settings(self._controller())
         page.refresh()
 
+    def test_is_scanning_after_async_scan_completes_does_not_raise(self):
+        """Regression test for a real bug: once a background environment
+        scan (scan_environment_async, e.g. the one app.py kicks off on
+        startup) finished, its QThread's underlying C++ object could
+        already be deleted (thread.finished -> thread.deleteLater()) while
+        controller._scan_thread still pointed at it — so any later
+        is_scanning() call (e.g. environment.py's refresh(), reached via
+        Prompt Inspector's "Analyze & Save" -> refresh_all()) raised
+        `RuntimeError: libshiboken: Internal C++ object (QThread) already
+        deleted`. scan_environment_async() must clear _scan_thread once the
+        scan finishes, not just quit() it.
+        """
+        import tempfile
+        from claude_code_coach.providers import ClaudeCodeEnvironmentProvider
+
+        controller = self._controller()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            root.mkdir()
+            controller.environment = ClaudeCodeEnvironmentProvider(
+                project_root=root, user_home=Path(tmp) / "home"
+            )
+
+            started = controller.scan_environment_async()
+            self.assertTrue(started)
+            _wait_for_scan(controller)
+
+            # Must not raise (this is what used to hit "libshiboken:
+            # Internal C++ object already deleted").
+            self.assertFalse(controller.is_scanning())
+
+    def test_refresh_all_after_analyze_and_save_does_not_raise(self):
+        """End-to-end regression test for the exact reported symptom:
+        Prompt Inspector's Analyze & Save button calls controller.save()
+        then controller.refresh_all(), which reaches the Environment page's
+        refresh() -> controller.is_scanning() -- this must not raise even
+        when a prior async environment scan (e.g. app.py's startup scan)
+        has already completed (see
+        test_is_scanning_after_async_scan_completes_does_not_raise).
+        """
+        import tempfile
+        from claude_code_coach.providers import ClaudeCodeEnvironmentProvider
+        from claude_code_coach.ui.environment import Environment
+
+        controller = self._controller()
+        controller.register(Environment(controller))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            root.mkdir()
+            controller.environment = ClaudeCodeEnvironmentProvider(
+                project_root=root, user_home=Path(tmp) / "home"
+            )
+
+            controller.scan_environment_async()
+            _wait_for_scan(controller)
+
+            result = controller.analyze("Fix the login timeout bug in src/auth/login.ts.")
+            controller.save(result)
+            controller.refresh_all()  # must not raise
+
     def test_settings_runtime_controls(self):
         from claude_code_coach.ui.settings import Settings
         controller = self._controller()
