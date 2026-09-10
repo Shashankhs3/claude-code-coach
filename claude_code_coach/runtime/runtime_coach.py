@@ -60,8 +60,15 @@ class RuntimeCoach:
         return db.get_setting("runtime_hooks_path")
 
     # -- status / coaching -------------------------------------------------------
-    def status(self, environment_snapshot=None) -> RuntimeStatus:
-        sessions = db.list_runtime_sessions(limit=1)
+    def status(self, environment_snapshot=None, cwd: str | None = None) -> RuntimeStatus:
+        """`cwd`, when given, scopes to the most recent session recorded for
+        that workspace (Finding V5-1) rather than the most recent session
+        globally — added for the VS Code integration's multi-window
+        correlation, but optional and defaulting to the original
+        global-most-recent behavior so every existing caller (the desktop
+        UI) is completely unaffected.
+        """
+        sessions = db.list_runtime_sessions(limit=1, cwd=cwd)
         current = sessions[0] if sessions else None
         last_event_at = current["last_event_at"] if current else None
 

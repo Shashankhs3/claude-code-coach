@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 # Columns required by the current (V3) "prompts" table, and the default
 # value used to backfill them when migrating an older database.
@@ -269,6 +269,20 @@ def _ensure_v5_tables(conn: sqlite3.Connection) -> None:
     )
 
 
+# -- V6: workspace-aware session lookup (VS Code integration Phase 2) --------
+# Additive only — an existing `runtime_sessions` row simply gets cwd='' until
+# its next SessionStart event arrives. No row is ever deleted or rewritten
+# beyond adding this one column. This is the exact, and only, schema change
+# Phase 1 (docs/VSCODE_INTEGRATION_ARCHITECTURE.md, Finding V5-1) called for.
+def _migrate_v6_add_session_cwd(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "runtime_sessions"):
+        return  # _ensure_v4_tables() already ran and creates it fresh; nothing to add yet
+    cols = _existing_columns(conn, "runtime_sessions")
+    if "cwd" not in cols:
+        conn.execute("ALTER TABLE runtime_sessions ADD COLUMN cwd TEXT NOT NULL DEFAULT ''")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runtime_sessions_cwd ON runtime_sessions(cwd)")
+
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
     """Create or migrate the database to CURRENT_SCHEMA_VERSION."""
     conn.execute(
@@ -278,6 +292,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     _ensure_v3_tables(conn)
     _ensure_v4_tables(conn)
     _ensure_v5_tables(conn)
+    _migrate_v6_add_session_cwd(conn)
 
     row = conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()
     version = row[0] if row else 0

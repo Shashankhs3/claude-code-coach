@@ -7,6 +7,7 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from claude_code_coach.database import init_db
+from claude_code_coach.service import start_service, stop_service
 from claude_code_coach.ui import MainWindow
 from claude_code_coach.ui.theme import STYLESHEET
 
@@ -23,6 +24,12 @@ def run() -> int:
 
     if window.controller.scan_on_startup:
         window.controller.scan_environment_async(on_done=lambda snap: window.controller.refresh_all())
+
+    # VS Code integration (Phase 2): loopback-only, starts/stops with this
+    # process. A failed bind (e.g. port in use) never affects the app
+    # itself — see service/lifecycle.py.
+    start_service()
+    app.aboutToQuit.connect(stop_service)
 
     return app.exec()
 

@@ -393,14 +393,27 @@ def _apply_session_update(conn: sqlite3.Connection, row: dict) -> None:
     event_type = row["event_type"]
     tool_name = row.get("tool_name") or ""
 
+    # Only SessionStart's metadata carries cwd (see runtime/event_parser.py).
+    metadata = row.get("metadata_json")
+    cwd = ""
+    if event_type == "SessionStart" and isinstance(metadata, dict):
+        cwd = str(metadata.get("cwd") or "")
+
     existing = conn.execute(
         "SELECT session_id FROM runtime_sessions WHERE session_id = ?", (session_id,)
     ).fetchone()
     if not existing:
         conn.execute(
-            "INSERT INTO runtime_sessions (session_id, started_at, last_event_at) "
-            "VALUES (?, ?, ?)",
-            (session_id, received_at, received_at),
+            "INSERT INTO runtime_sessions (session_id, started_at, last_event_at, cwd) "
+            "VALUES (?, ?, ?, ?)",
+            (session_id, received_at, received_at, cwd),
+        )
+    elif cwd:
+        # A late/reordered SessionStart still fills cwd in, but never
+        # overwrites one already recorded.
+        conn.execute(
+            "UPDATE runtime_sessions SET cwd = ? WHERE session_id = ? AND cwd = ''",
+            (cwd, session_id),
         )
 
     increments = {"prompts": 0, "tool_calls": 0, "searches": 0, "reads": 0,
@@ -458,13 +471,35 @@ def _runtime_event_row_to_dict(row: sqlite3.Row) -> dict:
     return d
 
 
-def list_runtime_sessions(limit: int | None = None) -> list[dict]:
+def _normalize_path_for_match(p: str) -> str:
+    # Kept as a tiny local helper (rather than imported from
+    # providers/claude_code_provider.py, which has the identical one-liner)
+    # to avoid the database layer depending on a higher layer — same
+    # reasoning as the _SEARCH_TOOLS taxonomy duplication above.
+    return str(Path(p)).replace("\\", "/").lower() if p else ""
+
+
+def list_runtime_sessions(limit: int | None = None, cwd: str | None = None) -> list[dict]:
+    """`cwd`, when given, filters to sessions whose recorded SessionStart cwd
+    matches (case/slash-insensitive) — the workspace-aware lookup Phase 1
+    identified as missing (Finding V5-1) and Phase 2 was authorized to add.
+    A session with no recorded cwd (e.g. never got a SessionStart event, or
+    predates this migration) never matches a cwd filter — it's simply
+    excluded, never guessed at.
+    """
     with get_connection() as conn:
         ensure_schema(conn)
-        sql = "SELECT * FROM runtime_sessions ORDER BY last_event_at DESC"
-        if limit:
-            sql += f" LIMIT {int(limit)}"
-        return [dict(r) for r in conn.execute(sql).fetchall()]
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM runtime_sessions ORDER BY last_event_at DESC"
+        ).fetchall()]
+
+    if cwd:
+        target = _normalize_path_for_match(cwd)
+        rows = [r for r in rows if r.get("cwd") and _normalize_path_for_match(r["cwd"]) == target]
+
+    if limit:
+        rows = rows[:limit]
+    return rows
 
 
 def get_runtime_session(session_id: str) -> dict | None:
