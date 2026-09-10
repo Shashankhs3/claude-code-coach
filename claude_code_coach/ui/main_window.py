@@ -23,6 +23,7 @@ from .runtime import Runtime
 from .settings import Settings
 from .skill_creator import SkillCreator
 from .skills import Skills
+from .usage import Usage
 from .workshop import Workshop
 
 # Grouped navigation (spec Feature 11): (group_header_or_None, label, page_class).
@@ -43,6 +44,7 @@ NAV = (
     ("CAPABILITIES", "Integrations", Integrations),
     ("CAPABILITIES", "Environment", Environment),
     ("LEARNING", "Habits", Habits),
+    ("LEARNING", "Usage", Usage),
     ("LEARNING", "Workshop Mode", Workshop),
     (None, "Settings", Settings),
 )

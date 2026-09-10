@@ -46,6 +46,7 @@ from claude_code_coach.runtime.event_source import HookFileEventSource, NullRunt
 from claude_code_coach.runtime.runtime_coach import RuntimeCoach
 
 from .env_worker import EnvironmentScanWorker
+from .usage_worker import UsageScanWorker
 
 
 def _source(value: str | None) -> Source:
@@ -124,6 +125,11 @@ class CoachController(QObject):
         self._scan_worker: EnvironmentScanWorker | None = None
         self._scan_on_done = None
         self._scan_on_error = None
+
+        self._usage_scan_thread: QThread | None = None
+        self._usage_scan_worker: UsageScanWorker | None = None
+        self._usage_scan_on_done = None
+        self._usage_scan_on_error = None
 
     # -- page registry --------------------------------------------------
     def register(self, page) -> None:
@@ -339,6 +345,57 @@ class CoachController(QObject):
 
     def is_scanning(self) -> bool:
         return self._scan_thread is not None and self._scan_thread.isRunning()
+
+    # -- usage (token/cost) scan ------------------------------------------------
+    # Mirrors scan_environment_async() above exactly, including the same
+    # QObject-bound-method connection (so worker.finished/failed, emitted on
+    # the background thread, are correctly queued to the main thread by Qt's
+    # AutoConnection) and the same "only drop the QThread reference once the
+    # real thread.finished fires" lifecycle — both were hard-won fixes for a
+    # real bug (see that method's docstring); reusing the identical pattern
+    # here rather than inventing a slightly different one is deliberate.
+    def scan_usage_async(self, on_done=None, on_error=None) -> bool:
+        if self._usage_scan_thread is not None and self._usage_scan_thread.isRunning():
+            return False
+
+        thread = QThread()
+        worker = UsageScanWorker()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+
+        self._usage_scan_on_done = on_done
+        self._usage_scan_on_error = on_error
+
+        worker.finished.connect(self._on_usage_scan_finished)
+        worker.failed.connect(self._on_usage_scan_failed)
+        thread.finished.connect(self._on_usage_scan_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+
+        self._usage_scan_thread = thread
+        self._usage_scan_worker = worker
+        thread.start()
+        return True
+
+    def _on_usage_scan_finished(self, summary) -> None:
+        if self._usage_scan_thread is not None:
+            self._usage_scan_thread.quit()
+        on_done, self._usage_scan_on_done = self._usage_scan_on_done, None
+        if on_done:
+            on_done(summary)
+
+    def _on_usage_scan_failed(self, message: str) -> None:
+        if self._usage_scan_thread is not None:
+            self._usage_scan_thread.quit()
+        on_error, self._usage_scan_on_error = self._usage_scan_on_error, None
+        if on_error:
+            on_error(message)
+
+    def _on_usage_scan_thread_finished(self) -> None:
+        self._usage_scan_thread = None
+        self._usage_scan_worker = None
+
+    def is_usage_scanning(self) -> bool:
+        return self._usage_scan_thread is not None and self._usage_scan_thread.isRunning()
 
     # -- runtime (V4) --------------------------------------------------------
     def _build_runtime_source(self) -> HookFileEventSource:

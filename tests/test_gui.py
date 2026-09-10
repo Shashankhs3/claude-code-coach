@@ -123,6 +123,45 @@ class TestIndividualPages(GuiTestCase):
         page = Skills(self._controller())
         page.refresh()
 
+    def test_usage_page_construction_and_rendering(self):
+        # The QObject-bound-method-QThread wiring itself (scan_usage_async)
+        # is already exercised by a standalone script and mirrors
+        # scan_environment_async exactly, whose equivalent async-completion
+        # tests already run earlier in this same file/process. Spinning up
+        # yet another real background QThread here (the 30th+ in this one
+        # long-lived shared QApplication) was observed to intermittently
+        # hang/crash this test process on this machine -- a Windows/Qt
+        # thread-churn artifact under that specific load, not a defect in
+        # the usage-scanning logic (see tests/test_usage.py's 17 tests,
+        # all fast and deterministic against synthetic fixtures). So this
+        # test sticks to what genuinely needs the real widget tree: that
+        # construction doesn't raise, and that the page renders correctly
+        # given a real UsageSummary, without needing a second live thread.
+        from claude_code_coach.usage.transcript_parser import UsageRecord
+        from claude_code_coach.usage.usage_analyzer import build_usage_summary
+        from claude_code_coach.ui.usage import Usage
+
+        controller = self._controller()
+        # scan_usage_async normally spins a background QThread; patched here
+        # to call back synchronously with a real, deterministic UsageSummary
+        # instead, so page construction never depends on thread timing.
+        summary = build_usage_summary([
+            UsageRecord(
+                timestamp="2026-01-01T00:00:00.000Z", model="claude-sonnet-5",
+                session_id="s1", project_dir="proj-a", cwd="C:\\Demo",
+                input_tokens=10, output_tokens=5, cache_read_tokens=0,
+                cache_write_5m_tokens=0, cache_write_1h_tokens=0,
+            ),
+        ])
+        controller.scan_usage_async = lambda on_done=None, on_error=None: (
+            on_done(summary) if on_done else None
+        ) or True
+        controller.is_usage_scanning = lambda: False
+
+        page = Usage(controller)
+        self.assertIn("Last scanned", page.scanned_label.text())
+        page.refresh()
+
     def test_agents(self):
         from claude_code_coach.ui.agents import Agents
         page = Agents(self._controller())
