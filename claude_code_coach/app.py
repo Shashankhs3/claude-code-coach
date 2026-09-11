@@ -30,6 +30,10 @@ def run() -> int:
     # itself — see service/lifecycle.py.
     start_service()
     app.aboutToQuit.connect(stop_service)
+    # Give any in-flight background scan (environment or usage) a bounded
+    # chance to actually stop before Qt tears down its QThread — see
+    # CoachController.shutdown()'s docstring for the real bug this closes.
+    app.aboutToQuit.connect(window.controller.shutdown)
 
     return app.exec()
 

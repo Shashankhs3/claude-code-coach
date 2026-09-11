@@ -72,7 +72,7 @@ class Usage(QWidget):
 
         top_row = QHBoxLayout()
         self.refresh_button = QPushButton("Rescan")
-        self.refresh_button.clicked.connect(self.refresh)
+        self.refresh_button.clicked.connect(self._start_scan)
         self.scanned_label = QLabel("")
         self.scanned_label.setStyleSheet(f"color: {theme.TEXT_FAINT}; font-size: 11px;")
         top_row.addWidget(self.refresh_button)
@@ -106,7 +106,17 @@ class Usage(QWidget):
 
         outer.addStretch()
 
-        self.refresh()
+        # Cache-first, same as environment.py's own refresh(): every page is
+        # constructed eagerly at app startup (main_window.py builds all of
+        # them up front for the QStackedWidget) regardless of whether the
+        # user ever visits it, so __init__ must never kick off real work on
+        # its own — only render whatever's already cached (nothing, the
+        # first time). A real scan runs only on first navigation to this
+        # page (see refresh()) or an explicit Rescan click.
+        if self.controller.usage_summary is not None:
+            self._render(self.controller.usage_summary)
+        else:
+            self.scanned_label.setText("Not scanned yet.")
 
     def _clear(self, layout) -> None:
         while layout.count():
@@ -117,10 +127,21 @@ class Usage(QWidget):
                 self._clear(item.layout())
 
     def refresh(self) -> None:
-        """Scans ~/.claude/projects/ on a background thread (env_worker.py's
-        pattern, reused exactly) rather than blocking the UI thread — this
+        """Called every time this page is navigated to (main_window.py's
+        _navigate()), not just once. Re-rendering a cached summary is
+        instant; a real scan only starts automatically the first time this
+        page is ever visited in a session (no cached summary yet) or when
+        Rescan is clicked explicitly — never on every revisit, since this
         scan only gets slower as a person's real Claude Code history grows.
         """
+        if self.controller.usage_summary is not None:
+            self._render(self.controller.usage_summary)
+        elif not self.controller.is_usage_scanning():
+            self._start_scan()
+
+    def _start_scan(self) -> None:
+        """Scans ~/.claude/projects/ on a background thread (env_worker.py's
+        pattern, reused exactly) rather than blocking the UI thread."""
         if self.controller.is_usage_scanning():
             return
         self.refresh_button.setEnabled(False)

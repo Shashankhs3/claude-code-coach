@@ -153,13 +153,30 @@ class TestIndividualPages(GuiTestCase):
                 cache_write_5m_tokens=0, cache_write_1h_tokens=0,
             ),
         ])
-        controller.scan_usage_async = lambda on_done=None, on_error=None: (
-            on_done(summary) if on_done else None
-        ) or True
+        def fake_scan(on_done=None, on_error=None):
+            # Mirrors what the real _on_usage_scan_finished does (caches
+            # onto controller.usage_summary) so refresh()'s cache-first
+            # check behaves exactly as it would against the real thread.
+            controller.usage_summary = summary
+            if on_done:
+                on_done(summary)
+            return True
+
+        controller.scan_usage_async = fake_scan
         controller.is_usage_scanning = lambda: False
 
         page = Usage(controller)
+        # Construction alone never scans (every page is built eagerly at
+        # startup regardless of whether it's ever visited) — only a real
+        # navigation to the page does, via refresh().
+        self.assertIn("Not scanned", page.scanned_label.text())
+
+        page.refresh()
         self.assertIn("Last scanned", page.scanned_label.text())
+
+        # A second refresh() (e.g. revisiting the page) must NOT scan again
+        # — it just re-renders the already-cached summary.
+        controller.scan_usage_async = lambda **_: self.fail("must not rescan on a cached revisit")
         page.refresh()
 
     def test_agents(self):
@@ -389,6 +406,38 @@ class TestIndividualPages(GuiTestCase):
 
             # Must not raise (this is what used to hit "libshiboken:
             # Internal C++ object already deleted").
+            self.assertFalse(controller.is_scanning())
+
+    def test_shutdown_is_noop_with_no_scan_running(self):
+        controller = self._controller()
+        controller.shutdown()  # must not raise
+
+    def test_shutdown_waits_for_in_flight_scan(self):
+        """Regression test for a real bug: closing the app while a
+        background scan (environment or usage) was still running let Qt
+        destroy the QThread mid-flight -- "QThread: Destroyed while thread
+        '' is still running" -- since nothing told the app to wait for it
+        first. app.py connects controller.shutdown() to aboutToQuit
+        specifically to close this gap.
+        """
+        import tempfile
+        from claude_code_coach.providers import ClaudeCodeEnvironmentProvider
+
+        controller = self._controller()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            root.mkdir()
+            controller.environment = ClaudeCodeEnvironmentProvider(
+                project_root=root, user_home=Path(tmp) / "home"
+            )
+            started = controller.scan_environment_async()
+            self.assertTrue(started)
+
+            # Call shutdown() immediately, without waiting for the scan to
+            # finish first -- shutdown() itself must block (bounded) until
+            # the thread actually stops, never leaving one destroyed while
+            # still running.
+            controller.shutdown()
             self.assertFalse(controller.is_scanning())
 
     def test_refresh_all_after_analyze_and_save_does_not_raise(self):

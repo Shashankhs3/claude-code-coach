@@ -130,6 +130,12 @@ class CoachController(QObject):
         self._usage_scan_worker: UsageScanWorker | None = None
         self._usage_scan_on_done = None
         self._usage_scan_on_error = None
+        # Cache-first, same pattern as environment_snapshot above: a scan
+        # only ever runs when explicitly asked for (first visit to the
+        # Usage page, or its Rescan button) — never unconditionally at
+        # every app startup, since ALL pages are constructed eagerly here
+        # in __init__ regardless of whether the user ever visits them.
+        self.usage_summary = None
 
     # -- page registry --------------------------------------------------
     def register(self, page) -> None:
@@ -377,6 +383,7 @@ class CoachController(QObject):
         return True
 
     def _on_usage_scan_finished(self, summary) -> None:
+        self.usage_summary = summary
         if self._usage_scan_thread is not None:
             self._usage_scan_thread.quit()
         on_done, self._usage_scan_on_done = self._usage_scan_on_done, None
@@ -396,6 +403,29 @@ class CoachController(QObject):
 
     def is_usage_scanning(self) -> bool:
         return self._usage_scan_thread is not None and self._usage_scan_thread.isRunning()
+
+    def shutdown(self) -> None:
+        """Called from app.py's aboutToQuit. Neither scan_environment_async
+        nor scan_usage_async previously had any way to know the application
+        itself was closing — if the user closed the app while either scan
+        was still in flight (the usage scan in particular, since Usage's
+        page constructor kicks one off unconditionally at startup, unlike
+        the environment scan which is gated behind scan_on_startup), Qt's
+        own application teardown could destroy a QThread object while its
+        underlying OS thread was still actually running: "QThread:
+        Destroyed while thread '' is still running" — a real, if racy,
+        gap the thread.finished-gated reference-clearing above doesn't
+        close by itself, since that only protects against dropping this
+        controller's OWN reference early, not against the interpreter
+        tearing everything down while a thread is genuinely still active.
+        A bounded wait() here means a scan in progress gets a real chance
+        to finish (or is told to quit and given a moment to actually stop)
+        before anything is destroyed.
+        """
+        for thread in (self._scan_thread, self._usage_scan_thread):
+            if thread is not None and thread.isRunning():
+                thread.quit()
+                thread.wait(2000)
 
     # -- runtime (V4) --------------------------------------------------------
     def _build_runtime_source(self) -> HookFileEventSource:
