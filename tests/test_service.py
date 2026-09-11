@@ -67,6 +67,29 @@ class RunningServiceTestCase(TempDbTestCase):
             except json.JSONDecodeError:
                 return exc.code, None
 
+    def post(self, path: str, payload, *, token: str | None = "__default__", timeout: float = 5.0):
+        """Returns (status_code, parsed_json_or_None). `payload` may be a
+        dict (JSON-encoded normally) or raw bytes (sent verbatim, for
+        malformed-body tests)."""
+        if token == "__default__":
+            token = self.token
+        data = payload if isinstance(payload, (bytes, bytearray)) else json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}", data=data, method="POST",
+        )
+        req.add_header("Content-Type", "application/json")
+        if token is not None:
+            req.add_header("X-Coach-Token", token)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            body = exc.read()
+            try:
+                return exc.code, json.loads(body)
+            except json.JSONDecodeError:
+                return exc.code, None
+
 
 class TestServerStartupShutdown(RunningServiceTestCase):
     def test_service_reports_running_after_start(self):
@@ -400,6 +423,136 @@ class TestSignalCreation(TempDbTestCase):
                 db_module.DB_PATH = original
         finally:
             lifecycle.stop_service()
+
+
+class TestAnalyzeEndpoint(RunningServiceTestCase):
+    def test_valid_prompt_returns_real_analysis(self):
+        status, body = self.post("/api/v1/analyze", {"prompt": "fix it"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["prompt"], "fix it")
+        self.assertIn("score", body)
+        self.assertIn("rating", body)
+        self.assertIn("dimensions", body)
+        self.assertIn("goal", body["dimensions"])
+
+    def test_missing_prompt_is_400(self):
+        status, body = self.post("/api/v1/analyze", {})
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "invalid_request")
+
+    def test_non_string_prompt_is_400(self):
+        status, body = self.post("/api/v1/analyze", {"prompt": 123})
+        self.assertEqual(status, 400)
+
+    def test_empty_string_prompt_is_400(self):
+        status, body = self.post("/api/v1/analyze", {"prompt": "   "})
+        self.assertEqual(status, 400)
+
+    def test_oversized_prompt_is_400_not_crash(self):
+        status, body = self.post("/api/v1/analyze", {"prompt": "a" * 30_000})
+        self.assertEqual(status, 400)
+        status2, _ = self.call("/api/v1/health")
+        self.assertEqual(status2, 200)  # server must still be alive
+
+    def test_malformed_json_body_is_400(self):
+        status, body = self.post("/api/v1/analyze", b"{not valid json")
+        self.assertEqual(status, 400)
+
+    def test_non_object_json_body_is_400(self):
+        status, body = self.post("/api/v1/analyze", b'"just a string"')
+        self.assertEqual(status, 400)
+
+    def test_missing_content_length_is_411(self):
+        conn = __import__("http.client", fromlist=["client"]).HTTPConnection(
+            "127.0.0.1", self.port
+        )
+        conn.putrequest("POST", "/api/v1/analyze")
+        conn.putheader("X-Coach-Token", self.token)
+        conn.endheaders()  # no Content-Length, no body
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 411)
+        conn.close()
+
+    def test_body_too_large_is_413(self):
+        import http.client
+
+        conn = http.client.HTTPConnection("127.0.0.1", self.port)
+        oversized = b'{"prompt": "' + b"a" * 100_000 + b'"}'
+        conn.request(
+            "POST", "/api/v1/analyze", body=oversized,
+            headers={"X-Coach-Token": self.token, "Content-Length": str(len(oversized))},
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 413)
+        conn.close()
+
+    def test_missing_token_is_401(self):
+        status, body = self.post("/api/v1/analyze", {"prompt": "fix it"}, token=None)
+        self.assertEqual(status, 401)
+
+    def test_unknown_post_route_is_404(self):
+        status, body = self.post("/api/v1/nope", {"prompt": "x"})
+        self.assertEqual(status, 404)
+
+    def test_post_to_get_only_route_is_405(self):
+        status, body = self.post("/api/v1/health", {})
+        self.assertEqual(status, 405)
+
+
+class TestSuggestEndpoint(RunningServiceTestCase):
+    def test_underspecified_prompt_returns_a_rewrite(self):
+        status, body = self.post("/api/v1/suggest", {"prompt": "fix it"})
+        self.assertEqual(status, 200)
+        self.assertIn("category", body)
+        self.assertIn("message", body)
+        self.assertIn("suggested_text", body)
+
+    def test_good_prompt_may_have_no_safe_rewrite(self):
+        # A well-specified prompt should never get a fabricated "improvement"
+        # -- suggested_text may legitimately be None.
+        good_prompt = (
+            "Fix the null pointer exception in src/auth/login.py's "
+            "validate_token function. Do not change the public API. "
+            "Done when the existing test suite passes."
+        )
+        status, body = self.post("/api/v1/suggest", {"prompt": good_prompt})
+        self.assertEqual(status, 200)
+        self.assertIn("suggested_text", body)  # key present even if null
+
+    def test_missing_prompt_is_400(self):
+        status, body = self.post("/api/v1/suggest", {})
+        self.assertEqual(status, 400)
+
+
+class TestApproachEndpoint(RunningServiceTestCase):
+    def test_valid_prompt_returns_recommendations(self):
+        status, body = self.post("/api/v1/approach", {"prompt": "Investigate the failing test."})
+        self.assertEqual(status, 200)
+        self.assertIn("recommendations", body)
+        self.assertIsInstance(body["recommendations"], list)
+        self.assertGreaterEqual(len(body["recommendations"]), 1)  # always at least normal_session
+
+    def test_missing_prompt_is_400(self):
+        status, body = self.post("/api/v1/approach", {})
+        self.assertEqual(status, 400)
+
+    def test_recommendation_preserves_real_confidence_levels(self):
+        status, body = self.post("/api/v1/approach", {"prompt": "Do something."})
+        self.assertEqual(status, 200)
+        for rec in body["recommendations"]:
+            self.assertIn(rec["level"], ("low", "medium", "high"))
+            self.assertIn("kind", rec)
+            self.assertIn("evidence", rec)
+
+    def test_invalid_project_root_type_is_400(self):
+        status, body = self.post(
+            "/api/v1/approach", {"prompt": "x", "project_root": 123},
+        )
+        self.assertEqual(status, 400)
+
+    def test_invalid_cwd_type_is_400(self):
+        status, body = self.post("/api/v1/approach", {"prompt": "x", "cwd": 123})
+        self.assertEqual(status, 400)
 
 
 if __name__ == "__main__":

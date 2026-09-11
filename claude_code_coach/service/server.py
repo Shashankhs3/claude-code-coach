@@ -1,12 +1,18 @@
-"""Loopback-only HTTP server for the VS Code integration (Phase 2).
+"""Loopback-only HTTP server for the VS Code integration (Phase 2/3).
 
 Binds `127.0.0.1` ONLY — never `0.0.0.0`. Every request must carry a
 matching `X-Coach-Token` header (written to `service.json` at startup, a
-file with the same OS-account-level access `coach.db` already has). Every
-route here is read-only: no request body is ever accepted, nothing in a
-query string is ever passed to a shell or `exec`/`eval` — only to a
-`Path(...)`/sqlite query, exactly like every other local path the desktop
-UI already accepts from the user (e.g. "Choose Project Folder").
+file with the same OS-account-level access `coach.db` already has).
+Nothing in a query string or POST body is ever passed to a shell or
+`exec`/`eval` — only to `analyzer.analyze_prompt`/`suggest_prompt`/
+`recommend_approach` (pure, deterministic functions) or a `Path(...)`/
+sqlite query, exactly like every other local path/prompt the desktop UI
+already accepts from the user.
+
+Phase 3 adds POST for exactly three routes (analyze/suggest/approach) —
+these carry a prompt in the body (too long/free-form for a query string),
+but remain pure analysis calls: nothing is written to disk or the
+database by any of them. GET-only routes are unchanged.
 """
 
 from __future__ import annotations
@@ -20,6 +26,11 @@ from urllib.parse import parse_qs, urlparse
 from . import coach_service
 
 MAX_PARAM_LENGTH = 4096
+# Bounds the POST body itself (JSON overhead + prompt + optional
+# project_root/cwd) — coach_service.MAX_PROMPT_LENGTH bounds the prompt
+# field specifically; this bounds the raw bytes read off the socket
+# before any JSON parsing happens at all.
+MAX_BODY_LENGTH = 65_536
 
 logger = logging.getLogger("claude_code_coach.service")
 
@@ -57,6 +68,14 @@ ROUTES = {
     "/api/v1/environment": lambda qs: coach_service.environment(
         project_root=safe_query_param(qs, "project_root"),
     ),
+}
+
+# Phase 3: POST route table -> callable(payload_dict) -> JSON-safe dict.
+# Same one-line-into-coach_service discipline as ROUTES above.
+POST_ROUTES = {
+    "/api/v1/analyze": coach_service.analyze,
+    "/api/v1/suggest": coach_service.suggest,
+    "/api/v1/approach": coach_service.approach,
 }
 
 
@@ -117,6 +136,71 @@ class CoachRequestHandler(BaseHTTPRequestHandler):
         self._write_json(HTTPStatus.OK, result)
 
     def do_POST(self) -> None:  # noqa: N802
-        # No mutating endpoints in Phase 2 (see architecture doc §6) — every
-        # route is GET-only.
-        self._write_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "method_not_allowed"})
+        parsed = urlparse(self.path)
+        route = POST_ROUTES.get(parsed.path)
+
+        if route is None:
+            # Covers both "not a route at all" and "a GET-only route hit
+            # with POST" — either way, method_not_allowed is the honest
+            # answer for a known GET route, not_found for an unknown path.
+            status = (
+                HTTPStatus.METHOD_NOT_ALLOWED if parsed.path in ROUTES else HTTPStatus.NOT_FOUND
+            )
+            error = "method_not_allowed" if status == HTTPStatus.METHOD_NOT_ALLOWED else "not_found"
+            self._write_json(status, {"error": error})
+            return
+
+        if not self._token_ok():
+            self._write_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+            return
+
+        payload = self._read_json_body()
+        if payload is None:
+            return  # _read_json_body already wrote the error response
+
+        try:
+            result = route(payload)
+        except coach_service.InvalidRequestError as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_request", "detail": str(exc)})
+            return
+        except Exception:  # noqa: BLE001 - a bad/edge-case request must never crash the server thread
+            logger.exception("handler error for %s", parsed.path)
+            self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._write_json(HTTPStatus.OK, result)
+
+    def _read_json_body(self) -> dict | None:
+        """Reads and parses a bounded JSON request body. Writes an error
+        response and returns None on any problem — never raises, never
+        logs the body itself (it may contain prompt text)."""
+        length_header = self.headers.get("Content-Length")
+        if length_header is None:
+            self._write_json(HTTPStatus.LENGTH_REQUIRED, {"error": "content_length_required"})
+            return None
+        try:
+            length = int(length_header)
+        except ValueError:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_content_length"})
+            return None
+        if length < 0 or length > MAX_BODY_LENGTH:
+            self._write_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "body_too_large"})
+            return None
+
+        try:
+            raw = self.rfile.read(length)
+        except OSError:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"error": "body_read_failed"})
+            return None
+
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            self._write_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return None
+
+        if not isinstance(payload, dict):
+            self._write_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_request", "detail": "body must be a JSON object"})
+            return None
+
+        return payload
