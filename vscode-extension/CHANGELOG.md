@@ -3,6 +3,41 @@
 All notable changes to the Claude Code Coach VS Code extension are
 documented here.
 
+## 0.3.1 — Pre-release
+
+**Added** (since 0.3.0):
+
+- **Bundled Coach service (Windows x64)**: the extension now ships its
+  own self-contained Coach service executable (`CoachService.exe`) and
+  starts it automatically in the background when no service (standalone
+  or desktop) is already reachable — no Python install required.
+  Supported on Windows x64 only; on any other platform or architecture
+  the extension behaves exactly as before (connects to a desktop app or
+  standalone service you run yourself), since no bundled executable
+  ships for those targets.
+- **Automatic startup**: `refresh()` and `Inspect Prompt` both attempt to
+  start the bundled service before reporting `Offline`, governed by a
+  new `claudeCodeCoach.autoStartService` setting (default on). A service
+  you already run yourself, or the desktop app, is always preferred and
+  never duplicated — the extension only starts its own service when
+  nothing else answers the same validated discovery check (shape, live
+  PID, compatible API version) every other code path here already uses.
+- **Stale service recovery**: a leftover `service.json` pointing at a
+  process that is no longer running (e.g. after a crash or forceful
+  kill) is detected via a live PID check and no longer blocks a fresh
+  start.
+- **Safe existing-service reuse**: if a compatible service is already
+  reachable — desktop app or a standalone service someone else started
+  — the extension reuses it as-is and never spawns a second one.
+- **Duplicate-start protection**: a short-TTL lock file prevents two VS
+  Code windows racing to spawn their own copy of the bundled service;
+  the OS-level port bind in the service itself is the real correctness
+  backstop regardless of how many windows attempt to start one.
+
+**Not included in this release**: the bundled auto-start service remains
+Windows x64 only; macOS and Linux still require a desktop app or
+standalone service you start yourself.
+
 ## 0.3.0 — Pre-release beta
 
 **Added** (since 0.1.0):
@@ -29,17 +64,6 @@ documented here.
   to start the desktop app themselves. This is guidance text only —
   the extension cannot locate or launch the desktop app automatically,
   and does not claim to.
-- **Bundled Coach service (Windows)**: the extension now ships its own
-  self-contained Coach service executable and starts it automatically in
-  the background when no service (standalone or desktop) is already
-  reachable — no Python install required. Off by default only if you turn
-  it off (`claudeCodeCoach.autoStartService`); a service you already run
-  yourself, or the desktop app, is always preferred and never duplicated.
-  Never connects on a bare open port — only on the same validated
-  discovery check (shape, live PID, compatible API version) every other
-  code path here already uses. See `packaging/README.md` for how this is
-  built and why it needed a real fix on the Python side, not just a
-  packaging trick, to keep working once frozen.
 
 **Fixed:**
 

@@ -2,7 +2,7 @@
   "name": "claude-code-coach",
   "displayName": "Claude Code Coach",
   "description": "Workflow coaching for Claude Code developers — connects to your locally running Claude Code Coach desktop app to show live status, workspace, and runtime state in VS Code. Independent, community project; not affiliated with or endorsed by Anthropic.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "ShashankHS",
   "private": true,
   "license": "MIT",

@@ -55,6 +55,18 @@ information without leaving the editor.
   file plus a fallback poll — no need to manually refresh.
 - **Automatic reconnection**: if the desktop app restarts, or wasn't
   running yet when VS Code started, the extension picks it up on its own.
+- **Bundled Coach service, with automatic startup (Windows x64)**: on
+  supported Windows x64 systems, the extension ships its own
+  self-contained Coach service and starts it automatically in the
+  background when no service (standalone or desktop) is already
+  reachable — no Python install and no desktop app required to get
+  basic status/coaching. A service you already run yourself, or the
+  desktop app, is always detected and reused instead of starting a
+  second one; a stale leftover from a crashed service is detected and
+  recovered from automatically. Governed by the
+  `claudeCodeCoach.autoStartService` setting (default on). Not available
+  on macOS, Linux, or non-x64 Windows — those still require the desktop
+  app or a standalone service you start yourself.
 
 **Not yet implemented in this release**: Skill/Agent **creation** and
 Workshop Mode have no VS Code UI yet — creating a Skill/Agent (viewing an
@@ -77,19 +89,25 @@ application; the extension only displays what that application reports.
 
 ## Requirements
 
-- **The Claude Code Coach desktop application must be running.** This
-  extension has no functionality of its own without it — it is a window
-  into the desktop app's state, not a replacement for it.
+- **On Windows x64**, the extension can start its own bundled Coach
+  service automatically — nothing else needs to be running first (see
+  Features above). On any other platform or architecture, **the Claude
+  Code Coach desktop application must be running**: this extension has
+  no coaching intelligence of its own without either the bundled service
+  or the desktop app behind it.
 - Windows, macOS, or Linux with VS Code `^1.85.0` or later (the desktop
   app itself is developed and verified primarily on Windows).
 
 ## Install
 
-This beta is distributed as a `.vsix` file rather than through the
-Marketplace. See [Development](#development) for how to build one, then:
+Install **Claude Code Coach** from the VS Code Marketplace. This release
+is distributed on the **pre-release channel** — in the Extensions view,
+open the extension's page and choose **Switch to Pre-Release Version**
+(or install it directly with the `.vsix` produced by
+[Development](#development)):
 
 ```powershell
-code --install-extension claude-code-coach-0.3.0.vsix
+code --install-extension claude-code-coach-0.3.1.vsix
 ```
 
 ## Quick Start
@@ -172,7 +190,8 @@ against the actual desktop app (not mockups).
 
 ## Known Limitations
 
-- Requires the desktop application; there is no standalone mode.
+- On platforms other than Windows x64, requires the desktop application;
+  there is no standalone mode there.
 - No real-time push — updates arrive via a local file-change signal plus
   a periodic fallback poll, typically sub-second in practice but not a
   hard real-time guarantee.
@@ -180,8 +199,8 @@ against the actual desktop app (not mockups).
   project.
 - No Prompt Inspector, Approach Advisor, Skill/Agent creation, or
   Workshop Mode UI yet — desktop-only for now.
-- Not published to the VS Code Marketplace yet; distributed as a `.vsix`
-  during this beta.
+- The bundled, auto-starting Coach service is Windows x64 only; there is
+  no bundled service for macOS, Linux, or non-x64 Windows.
 
 ## Troubleshooting
 
@@ -236,11 +255,14 @@ npm test
 
 ## Release Process
 
-This project is not yet published to the VS Code Marketplace. Publisher
-identity (`ShashankHS`), the public repository
-(https://github.com/Shashankhs3/claude-code-coach), and the license (MIT)
-have all been decided. See `docs/MARKETPLACE_BETA_CHECKLIST.md` for what
-else remains before a public release.
+This extension is published to the VS Code Marketplace as
+`ShashankHS.claude-code-coach`. New feature work ships first on the
+**pre-release channel** for manual validation before being promoted to
+the default (stable) channel. Publisher identity (`ShashankHS`), the
+public repository (https://github.com/Shashankhs3/claude-code-coach),
+and the license (MIT) have all been decided. See
+`docs/MARKETPLACE_BETA_CHECKLIST.md` for the checklist behind the 0.3.0
+release.
 
 ## Support
 
