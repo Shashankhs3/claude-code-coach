@@ -13,18 +13,24 @@ import json
 import logging
 import os
 import secrets
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
 
+from .. import __version__ as _package_version
 from ..database import db
-from . import coach_service
+from . import coach_service, models
 from .server import CoachHTTPServer, CoachRequestHandler
 
 logger = logging.getLogger("claude_code_coach.service")
 
 DEFAULT_PORT = 47823
 DRAIN_INTERVAL_SECONDS = 2.0
+# Bumped only if service.json's shape changes in a way a reader must branch
+# on (field removed/repurposed) — adding a field, as this phase does, is
+# backward compatible and does not require a bump.
+DISCOVERY_SCHEMA_VERSION = 1
 
 
 def _service_json_path() -> Path:
@@ -100,7 +106,15 @@ def stop_service() -> None:
     if _handle.drain_thread:
         _handle.drain_thread.join(timeout=DRAIN_INTERVAL_SECONDS * 2)
 
-    _remove_discovery_file()
+    # Phase 4D-A: service.json is one shared file, not per-process — if an
+    # external service has already overwritten it with its OWN pid/port/
+    # token since we last wrote it (the exact moment a Desktop-owned
+    # embedded copy hands off to a newly-appeared standalone service, see
+    # CoachController's handoff check), unconditionally unlinking here
+    # would delete THAT service's discovery file seconds after confirming
+    # it works — the opposite of what stopping our own copy should do.
+    # Only remove the file if it still names this process's own PID.
+    _remove_discovery_file_if_owned_by_this_process()
     _handle.httpd = None
     _handle.server_thread = None
     _handle.drain_thread = None
@@ -118,6 +132,8 @@ def current_port() -> int | None:
 
 def _write_discovery_file() -> None:
     payload = {
+        "schema_version": DISCOVERY_SCHEMA_VERSION,
+        "service_version": _package_version,
         "port": _handle.port,
         "token": _handle.token,
         "pid": os.getpid(),
@@ -137,12 +153,122 @@ def _remove_discovery_file() -> None:
         pass
 
 
+def _remove_discovery_file_if_owned_by_this_process() -> None:
+    """Phase 4D-A: the ownership-safe variant stop_service() actually
+    uses. A missing/unreadable/malformed file is treated as "nothing of
+    ours to remove" (not an error) — same tolerant read as
+    read_discovery_file(), duplicated narrowly here rather than reused
+    directly because this check must NOT apply read_discovery_file()'s own
+    liveness/api_version filtering (a file that fails those checks for
+    some OTHER reason could still be ours and still deserve cleanup)."""
+    try:
+        raw = _service_json_path().read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except (OSError, ValueError):
+        return
+    if isinstance(payload, dict) and payload.get("pid") == os.getpid():
+        _remove_discovery_file()
+
+
+def pid_is_alive(pid: int) -> bool:
+    """Stdlib-only, cross-platform "is this PID a live process" check (Phase
+    4 Step 4 — a reader of service.json must never trust a stale PID
+    blindly). No new dependency: ctypes on Windows (os.kill(pid, 0) is not
+    a liveness check there — see below), signal 0 via os.kill on POSIX.
+    """
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid,
+        )
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, just owned by another user — still "alive"
+    except OSError:
+        return False
+    return True
+
+
+# Phase 4C: set by read_discovery_file() on its most recent call — same
+# "last diagnostic" pattern as vscode-extension/src/coachClient.ts's
+# getLastDiscoveryIssue(), so a Python caller (the desktop client, Step 3)
+# can show *why* the service looks unusable instead of a single generic
+# "unavailable". Reusing the exact same three checks (shape, PID liveness,
+# api_version) as the TypeScript reader — see Step 3's "reuse the same
+# service-discovery principles already used by VS Code" — not a second
+# discovery mechanism, just this process's own reader of the one file.
+_last_discovery_issue: str | None = None
+
+
+def get_last_discovery_issue() -> str | None:
+    return _last_discovery_issue
+
+
+def read_discovery_file() -> dict | None:
+    """Reads service.json and returns it only if it looks live and speaks
+    an API version this process understands — returns None for "file
+    missing", "file present but its PID is dead" (Step 4's stale-discovery
+    requirement), and "file present but api_version is incompatible" alike,
+    so every caller gets one honest signal instead of re-implementing the
+    staleness/compatibility check itself. get_last_discovery_issue()
+    distinguishes the three after the fact for a caller that wants to say
+    more than "unavailable".
+    """
+    global _last_discovery_issue
+    try:
+        raw = _service_json_path().read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except (OSError, ValueError):
+        _last_discovery_issue = None  # routine: no service has ever run, or none is running
+        return None
+    if not isinstance(payload, dict):
+        _last_discovery_issue = None
+        return None
+    pid = payload.get("pid")
+    if not isinstance(pid, int) or not pid_is_alive(pid):
+        _last_discovery_issue = (
+            "Coach service discovery file is stale (the process that wrote it is no longer running)."
+        )
+        return None
+    api_version = payload.get("api_version")
+    if api_version != models.API_VERSION:
+        _last_discovery_issue = (
+            f"Coach service version is incompatible (service reports api_version "
+            f'"{api_version}", this client supports "{models.API_VERSION}").'
+        )
+        return None
+    _last_discovery_issue = None
+    return payload
+
+
 def _write_signal(reason: str, count: int) -> None:
     line = f"{reason} {datetime.now().isoformat(timespec='seconds')} {count}"
     try:
         _signal_file_path().write_text(line, encoding="utf-8")
     except OSError:
         pass
+
+
+def notify_state_changed(reason: str = "state_changed") -> None:
+    """Phase 4E (docs/SHARED_COACH_STATE.md §11): the one small public hook
+    onto the *existing* vscode_signal.txt mechanism — reusing `_write_signal`
+    rather than adding a second push system, per Step 11. A pure filesystem
+    write to a shared path; safe to call from any process regardless of
+    whether that process itself is running the HTTP service (e.g. Desktop
+    calling this after a direct coach.db pause-flag write while a separate
+    standalone service process owns the actual `_drain_loop`/httpd)."""
+    _write_signal(reason, 0)
 
 
 def _drain_loop() -> None:

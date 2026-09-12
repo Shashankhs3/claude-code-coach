@@ -12,9 +12,11 @@ survives an app restart until the next "Scan Again".
 
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread
+from PySide6.QtCore import QObject, QThread, QTimer
 
 from claude_code_coach import database as db
 from claude_code_coach.analyzer import AnalysisResult, analyze_prompt
@@ -44,9 +46,20 @@ from claude_code_coach.providers import (
 )
 from claude_code_coach.runtime.event_source import HookFileEventSource, NullRuntimeEventSource
 from claude_code_coach.runtime.runtime_coach import RuntimeCoach
+from claude_code_coach.service import BackendMode, CoachBackendClient, ServiceUnavailableError
+from claude_code_coach.service import lifecycle as _service_lifecycle
+from claude_code_coach.service.lifecycle import is_running as _embedded_service_owned_here
 
 from .env_worker import EnvironmentScanWorker
 from .usage_worker import UsageScanWorker
+
+logger = logging.getLogger("claude_code_coach.app")
+# Phase 4D-A Step 6: how often, while running the temporary embedded
+# fallback, to check whether an external standalone service has appeared
+# to hand off to. Deliberately much less frequent than the 2-3s runtime-
+# event drain/poll intervals elsewhere — this is a rare event, not one
+# that needs near-real-time detection the way a new hook event does.
+BACKEND_HANDOFF_CHECK_INTERVAL_MS = 15_000
 
 
 def _source(value: str | None) -> Source:
@@ -116,6 +129,30 @@ class CoachController(QObject):
         self.runtime_coach = RuntimeCoach(
             source=self._build_runtime_source() if self.runtime_enabled else NullRuntimeEventSource()
         )
+
+        # Phase 4C: this process's HTTP client for the Coach service —
+        # desktop-embedded or standalone, indistinguishable at the wire
+        # level (see service/client.py). runtime_status()/environment
+        # scanning below still read/write the shared coach.db and
+        # filesystem directly — they do NOT need to go through HTTP to see
+        # a standalone service's writes, since both processes share the
+        # same database file (see docs/DESKTOP_SERVICE_MIGRATION.md).
+        # What DOES need this client: poll_runtime()'s single-owner guard
+        # below, and coach_backend_summary() for the Dashboard/Settings
+        # readout (Step 5's "first migration slice").
+        self.backend_client = CoachBackendClient()
+
+        # Phase 4D-A, Step 6: while this process owns the temporary
+        # embedded fallback, periodically check whether an external
+        # standalone service has appeared to hand off to — see
+        # _check_for_standalone_handoff()'s own docstring for exactly how.
+        # QTimer(self) created only after super().__init__() above has
+        # fully run — the same ordering rule ui/runtime.py's and
+        # ui/inspector.py's own QTimers already follow, for the same
+        # reason (spec section 33; see those files' comments).
+        self._backend_handoff_timer = QTimer(self)
+        self._backend_handoff_timer.timeout.connect(self._check_for_standalone_handoff)
+        self._backend_handoff_timer.start(BACKEND_HANDOFF_CHECK_INTERVAL_MS)
 
         self.workshop_mode = db.get_setting("workshop_mode", "0") == "1"
 
@@ -426,6 +463,11 @@ class CoachController(QObject):
             if thread is not None and thread.isRunning():
                 thread.quit()
                 thread.wait(2000)
+        # Phase 4D-A: no correctness requirement (a stopped event loop
+        # simply stops delivering timeout() ticks either way), but stopping
+        # explicitly avoids a handoff check firing during the brief window
+        # between aboutToQuit and process exit.
+        self._backend_handoff_timer.stop()
 
     # -- runtime (V4) --------------------------------------------------------
     def _build_runtime_source(self) -> HookFileEventSource:
@@ -436,12 +478,182 @@ class CoachController(QObject):
         return HookFileEventSource(db.DB_PATH.parent / "runtime_events")
 
     def poll_runtime(self) -> int:
+        """Drains runtime_events/*.jsonl into coach.db — but ONLY when no
+        other Coach service is already doing that job (Phase 4C Step 7/8:
+        "there must be ONE authoritative event-draining owner"). Checked
+        fresh on every call (a single small file read + PID check — see
+        service/client.py's is_available()) rather than once at startup,
+        so this correctly stops draining the moment a standalone service
+        appears, and correctly resumes if that service later disappears —
+        no restart required (Step 18/19).
+
+        Reading is unaffected either way: runtime_status() below always
+        reads directly from coach.db, which is safe and current regardless
+        of *which* process most recently drained into it, since every
+        process shares the same database file. Only the drain/write side
+        needs a single owner; reads never did.
+
+        Note this also closes a narrower, pre-existing redundancy from
+        Phase 2/3 (see docs/STANDALONE_SERVICE_ARCHITECTURE.md §5): even
+        this process's OWN embedded service already runs its own
+        background drain thread (service/lifecycle.py's _drain_loop) once
+        start_service() succeeds, independent of this method. Before Phase
+        4C, poll_runtime() drained a second time on top of that
+        unconditionally — harmless (draining is idempotent by
+        construction) but redundant. Gating on has_reachable_backend()
+        (true once EITHER this process's own embedded copy or an external
+        standalone one is up) removes that redundancy too, not just the
+        cross-process standalone case.
+        """
         if not self.runtime_enabled:
+            return 0
+        if self.has_reachable_backend():
             return 0
         return self.runtime_coach.poll_and_store()
 
+    def has_reachable_backend(self) -> bool:
+        """True if a live, compatible Coach service — this process's own
+        embedded copy or an external standalone one, indistinguishable
+        from here — is reachable right now, meaning SOME process already
+        owns draining runtime_events/*.jsonl and this one must not also do
+        it (see poll_runtime()). Re-checked on every call, never cached,
+        so a service appearing/disappearing while the Desktop is open is
+        picked up on the very next check (Step 18: reconnect without
+        restarting). Use current_backend_mode() when you specifically need
+        to know whether the reachable service is an EXTERNAL one rather
+        than this process's own."""
+        return self.backend_client.is_available()
+
+    def current_backend_mode(self) -> BackendMode:
+        """Phase 4D-A, Step 2: the one place that turns "is my own embedded
+        copy running" + "is anything reachable" into the three explicit
+        states the rest of this class and the UI reason about. Computed
+        fresh every call — never stored — for the same reconnect-without-
+        restarting reason has_reachable_backend() is. STANDALONE also
+        covers "connected to another desktop instance's embedded copy";
+        that distinction was never made anywhere in this codebase and
+        Phase 4D-A does not start making it now (Step 18: no new
+        architecture, only ownership/fallback behavior).
+        """
+        if _embedded_service_owned_here():
+            return BackendMode.EMBEDDED_FALLBACK
+        if self.backend_client.is_available():
+            return BackendMode.STANDALONE
+        return BackendMode.UNAVAILABLE
+
+    def coach_backend_summary(self) -> dict:
+        """Phase 4C Step 5/16, extended Phase 4D-A: the one additive
+        readout proving the Desktop can consume the standalone service as
+        a real HTTP client — shown on the Dashboard and Settings,
+        everything else on both pages unchanged. Returns
+        {reachable, using_standalone, mode, detail} — never raises; a
+        service that's merely slow to answer health() still reports
+        reachable=True (discovery already confirmed a live, compatible
+        service) with a shorter detail string rather than failing the
+        whole summary over one slow health check.
+        """
+        mode = self.current_backend_mode()
+        if mode is BackendMode.UNAVAILABLE:
+            return {
+                "reachable": False,
+                "using_standalone": False,
+                "mode": mode,
+                "detail": self.backend_client.discovery_issue() or "No Coach service is currently running.",
+            }
+        detail = (
+            "Connected to this app's own embedded Coach service (temporary compatibility fallback)."
+            if mode is BackendMode.EMBEDDED_FALLBACK else
+            "Connected to a standalone Coach service (running independently of this app)."
+        )
+        try:
+            health = self.backend_client.health()
+            detail += f" [{health.get('service', 'coach')} api {health.get('api_version', '?')}]"
+        except Exception:  # noqa: BLE001 - a slow/flaky health call must not break this summary
+            pass
+        return {
+            "reachable": True,
+            "using_standalone": mode is BackendMode.STANDALONE,
+            "mode": mode,
+            "detail": detail,
+        }
+
+    def _check_for_standalone_handoff(self) -> None:
+        """Phase 4D-A, Step 3/4/8: called every
+        BACKEND_HANDOFF_CHECK_INTERVAL_MS by self._backend_handoff_timer.
+        A no-op unless this process currently owns the embedded fallback
+        AND service.json now names a *different*, live, compatible, and
+        (crucially) actually-responding process.
+
+        Ordering is deliberately NOT the literal Step 3 sequence (which
+        stops the embedded copy before verifying the candidate's health):
+        Step 4 explicitly warns about "standalone starts then immediately
+        stops," and stopping our own working backend before confirming the
+        replacement is real would self-inflict exactly that outage for no
+        reason. This checks health() FIRST and only stops our own copy
+        once a real, live, responding replacement is confirmed — never
+        leaving this process with zero backend as a result of a handoff
+        attempt. If the candidate turns out to be unreachable, this
+        process simply stays EMBEDDED_FALLBACK and tries again next tick.
+        """
+        if not _embedded_service_owned_here():
+            return  # not embedded right now — nothing to hand off from
+
+        discovery = _service_lifecycle.read_discovery_file()
+        if discovery is None:
+            return  # nothing external and valid right now
+        if discovery.get("pid") == os.getpid():
+            return  # that's just our own file — no external service exists yet
+
+        candidate_pid = discovery.get("pid")
+        try:
+            self.backend_client.health()
+        except ServiceUnavailableError:
+            # Discovery looked valid a moment ago but the candidate isn't
+            # actually answering right now (Step 4's exact race) — stay
+            # embedded and re-check on the next tick rather than guessing.
+            logger.info(
+                "Candidate standalone Coach service (pid %s) found but did not "
+                "respond to health check — staying on embedded fallback.", candidate_pid,
+            )
+            return
+
+        logger.info(
+            "Standalone Coach service detected (pid %s) and responded to health "
+            "check — handing off from this app's embedded copy.", candidate_pid,
+        )
+        _service_lifecycle.stop_service()
+        logger.info(
+            "Embedded Coach service stopped; this app is now a client of the "
+            "standalone service (pid %s).", candidate_pid,
+        )
+
     def runtime_status(self):
         return self.runtime_coach.status(environment_snapshot=self.environment_snapshot)
+
+    # -- shared coaching pause (Phase 4E, docs/SHARED_COACH_STATE.md §5) --------
+    def coaching_paused(self) -> bool:
+        """Cheap direct read (one `db.get_setting` call) for callers — e.g.
+        the Settings checkbox — that only need the flag, not a full
+        runtime_status() computation. `RuntimeStatus.paused` (from
+        runtime_status()) reads the exact same setting."""
+        from claude_code_coach.runtime.runtime_coach import is_coaching_paused
+        return is_coaching_paused()
+
+    def set_coaching_paused(self, enabled: bool) -> None:
+        """Writes the same `coaching_paused` row in coach.db a standalone
+        service's `/api/v1/pause` handler writes — shared automatically the
+        moment this process and a standalone service point at the same
+        database file (no new cross-process protocol needed). Also nudges
+        the existing vscode_signal.txt mechanism so a co-located standalone
+        service's VS Code windows refresh promptly, matching what the HTTP
+        endpoint does — best-effort, since this Desktop process may not be
+        the one running that service's drain loop at all."""
+        from claude_code_coach.runtime.runtime_coach import set_coaching_paused as _set_paused
+        _set_paused(enabled)
+        try:
+            _service_lifecycle.notify_state_changed("pause_changed")
+        except Exception:  # noqa: BLE001 - the setting write above already succeeded
+            pass
 
     def default_hooks_settings_path(self) -> Path:
         root = self.environment.project_root

@@ -6,3 +6,17 @@ node_modules/
 *.vsix
 out/
 .vscode-test/
+.pytest_cache/
+
+# Local/runtime/secret-shaped files — never intended to be committed.
+.env
+*.env
+*.log
+*.db
+coach.db
+service.json
+*.pem
+*.key
+*credential*
+*secret*
+*.local

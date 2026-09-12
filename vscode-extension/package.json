@@ -1,0 +1,110 @@
+{
+  "name": "claude-code-coach",
+  "displayName": "Claude Code Coach",
+  "description": "Workflow coaching for Claude Code developers — connects to your locally running Claude Code Coach desktop app to show live status, workspace, and runtime state in VS Code. Independent, community project; not affiliated with or endorsed by Anthropic.",
+  "version": "0.3.0",
+  "publisher": "ShashankHS",
+  "private": true,
+  "license": "MIT",
+  "icon": "icon.png",
+  "homepage": "https://github.com/Shashankhs3/claude-code-coach#readme",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "claude code",
+    "claude",
+    "ai coding",
+    "developer tools",
+    "workflow",
+    "coding assistant",
+    "developer productivity"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Shashankhs3/claude-code-coach"
+  },
+  "bugs": {
+    "url": "https://github.com/Shashankhs3/claude-code-coach/issues"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeCodeCoach.openCoach",
+        "title": "Claude Code Coach: Open Coach"
+      },
+      {
+        "command": "claudeCodeCoach.inspectPrompt",
+        "title": "Claude Code Coach: Inspect Prompt"
+      },
+      {
+        "command": "claudeCodeCoach.openDesktopCoach",
+        "title": "Claude Code Coach: Open Desktop Coach"
+      },
+      {
+        "command": "claudeCodeCoach.pauseCoaching",
+        "title": "Claude Code Coach: Pause Coaching"
+      },
+      {
+        "command": "claudeCodeCoach.resumeCoaching",
+        "title": "Claude Code Coach: Resume Coaching"
+      }
+    ],
+    "configuration": {
+      "title": "Claude Code Coach",
+      "properties": {
+        "claudeCodeCoach.pollIntervalSeconds": {
+          "type": "number",
+          "default": 5,
+          "minimum": 2,
+          "description": "How often the extension re-checks the local Coach service when the shared signal file hasn't changed (fallback poll, seconds)."
+        },
+        "claudeCodeCoach.coaching.notificationsEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable coaching notifications. Master switch for native VS Code notifications from Claude Code Coach; the panel and status bar are unaffected by this setting."
+        },
+        "claudeCodeCoach.coaching.notificationLevel": {
+          "type": "string",
+          "enum": [
+            "highOnly",
+            "highAndMedium",
+            "off"
+          ],
+          "enumDescriptions": [
+            "High only — notify only for high-confidence, actionable signals (e.g. broad exploration for a narrow task).",
+            "High + Medium — also notify for medium-confidence coaching signals (e.g. context becoming noisy).",
+            "Off — never show a native notification, even for high-confidence signals. The panel and status bar still update."
+          ],
+          "default": "highOnly",
+          "description": "Which coaching signal levels may trigger a native notification. Positive/low-level signals never trigger a native notification, regardless of this setting."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
+    "glob": "^11.0.3",
+    "mocha": "^12.0.0",
+    "typescript": "^5.4.0"
+  }
+}

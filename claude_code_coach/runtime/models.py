@@ -94,6 +94,7 @@ class SessionSummary:
     session_id: str
     started_at: str
     last_event_at: str
+    title: str = "Untitled session"  # see runtime/session_title.py — deterministic, no AI
     prompts: int = 0
     tool_calls: int = 0
     searches: int = 0
@@ -114,3 +115,7 @@ class RuntimeStatus:
     current_session: SessionSummary | None
     signals: list[RuntimeSignal] = field(default_factory=list)
     context_health: int | None = None  # 0-100, local heuristic — see runtime_analyzer.session_coherence
+    # Phase 4E: shared backend state (see docs/SHARED_COACH_STATE.md §5) —
+    # suppresses interventions across every client of the same coach.db,
+    # never event collection or the service itself.
+    paused: bool = False

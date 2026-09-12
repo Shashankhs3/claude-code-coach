@@ -1,0 +1,16 @@
+# Only out/*.js (the compiled extension) needs to ship. Everything below
+# is development-only and must never end up in the .vsix.
+
+.vscode-test/**
+.vscode/**
+src/**
+out/test/**
+**/*.map
+**/*.ts
+tsconfig.json
+package-lock.json
+node_modules/**
+media/screenshots/**
+.gitignore
+**/.eslintrc.json
+**/*.vsix

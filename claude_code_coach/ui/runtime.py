@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from claude_code_coach.runtime.models import ConnectionState
+from claude_code_coach.runtime.signal_priority import pick_primary_signal
 
 from . import theme
 from .widgets import Badge, EmptyState, Panel, SectionHeader, StatCard, page_header
@@ -103,6 +104,11 @@ class Runtime(QWidget):
             "🔒 Read-only: never executes Skill/Agent/MCP code. Prompt text is not stored "
             "unless you opt in on Settings. No network calls, ever."
         )
+        # UI stabilization pass (docs/UI_STABILIZATION_AUDIT.md, Issue 2/16):
+        # missing setWordWrap forced this single line to a 1430px-wide
+        # minimum, one of the two biggest contributors to the whole app's
+        # minimum window size (Issue 1).
+        privacy.setWordWrap(True)
         privacy.setStyleSheet(f"color: {theme.TEXT_FAINT}; font-size: 10.5px;")
         outer.addWidget(privacy)
 
@@ -115,11 +121,42 @@ class Runtime(QWidget):
         outer.addWidget(scroll)
 
         self.content_layout.addWidget(SectionHeader("CURRENT SESSION"))
+
+        # Session Title is the primary, human-readable identifier (deterministic,
+        # derived locally — never AI-generated, see runtime/session_title.py).
+        # The raw session UUID stays available as secondary/technical detail.
+        self.session_title_label = QLabel("")
+        self.session_title_label.setWordWrap(True)
+        self.session_title_label.setStyleSheet(
+            f"font-size: 16px; font-weight: 700; color: {theme.TEXT_PRIMARY};"
+        )
+        self.content_layout.addWidget(self.session_title_label)
+
+        self.session_id_label = QLabel("")
+        self.session_id_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 10.5px;")
+        self.content_layout.addWidget(self.session_id_label)
+
         self.session_cards = QHBoxLayout()
         self.session_cards.setSpacing(14)
         self.content_layout.addLayout(self.session_cards)
 
         self.content_layout.addWidget(SectionHeader("COACHING SIGNALS"))
+
+        # Phase 4E (docs/SHARED_COACH_STATE.md §5): shared with VS Code —
+        # pausing here also pauses VS Code, and vice versa. Hidden unless
+        # paused; the signal list underneath still renders normally (pause
+        # suppresses interventions, never the underlying evidence).
+        self.paused_banner = QLabel(
+            "⏸ Coaching paused — session data collection continues. Toggle "
+            "\"Pause Coaching\" on Settings to resume."
+        )
+        self.paused_banner.setWordWrap(True)
+        self.paused_banner.setStyleSheet(
+            f"color: {theme.TEXT_MUTED}; font-size: 12px; font-weight: 600;"
+        )
+        self.paused_banner.hide()
+        self.content_layout.addWidget(self.paused_banner)
+
         self.signals_layout = QVBoxLayout()
         self.signals_layout.setSpacing(10)
         self.content_layout.addLayout(self.signals_layout)
@@ -168,14 +205,27 @@ class Runtime(QWidget):
             else "No runtime events observed yet."
         )
 
-        self._clear(self.session_cards)
         s = status.current_session
+        if s:
+            self.session_title_label.setText(s.title)
+            self.session_title_label.setToolTip(f"Session ID: {s.session_id}")
+            self.session_id_label.setText(f"Session ID: {s.session_id}")
+            self.session_id_label.setToolTip(s.session_id)
+        else:
+            self.session_title_label.setText("")
+            self.session_title_label.setToolTip("")
+            self.session_id_label.setText("")
+            self.session_id_label.setToolTip("")
+
+        self._clear(self.session_cards)
         self.session_cards.addWidget(StatCard("PROMPTS", str(s.prompts) if s else "--"))
         self.session_cards.addWidget(StatCard("TOOL CALLS", str(s.tool_calls) if s else "--"))
         self.session_cards.addWidget(StatCard("SEARCHES", str(s.searches) if s else "--"))
         self.session_cards.addWidget(StatCard("READS", str(s.reads) if s else "--"))
         self.session_cards.addWidget(StatCard("EDITS", str(s.edits) if s else "--"))
         self.session_cards.addWidget(StatCard("SKILLS/AGENTS", str(s.skills_or_agents) if s else "--"))
+
+        self.paused_banner.setVisible(status.paused)
 
         self._clear(self.signals_layout)
         if not status.signals:
@@ -187,7 +237,16 @@ class Runtime(QWidget):
             )
             self.signals_layout.addWidget(EmptyState(msg))
         else:
-            for sig in status.signals:
+            # Same selector the backend exposes as /api/v1/session's
+            # primary_signal (docs/SHARED_COACH_STATE.md §4) — called
+            # directly here rather than over HTTP (same process, same
+            # data), so Desktop leads with the same signal VS Code does.
+            primary = pick_primary_signal(status.signals)
+            ordered = (
+                [primary] + [sig for sig in status.signals if sig is not primary]
+                if primary else status.signals
+            )
+            for sig in ordered:
                 self.signals_layout.addWidget(SignalCard(sig))
 
         self._refresh_timeline(s.session_id if s else None)

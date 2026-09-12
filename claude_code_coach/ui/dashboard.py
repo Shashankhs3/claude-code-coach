@@ -13,7 +13,7 @@ from claude_code_coach.analytics import (
 from claude_code_coach.runtime.models import ConnectionState
 
 from . import theme
-from .widgets import Badge, EmptyState, Panel, PercentBar, SectionHeader, StatCard, page_header
+from .widgets import Badge, EmptyState, Panel, PercentBar, SectionHeader, StatCard, backend_mode_label, page_header
 
 _RUNTIME_STATE_TEXT = {
     ConnectionState.LIVE: ("● Connected", theme.GOOD),
@@ -25,6 +25,8 @@ _RUNTIME_STATE_TEXT = {
 }
 
 
+# Top-level "home" view: summarizes recommendations, today's coaching stats,
+# habit trends, opportunities, and runtime connection status in one place.
 class Dashboard(QWidget):
     def __init__(self, controller):
         super().__init__()
@@ -34,8 +36,8 @@ class Dashboard(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 22, 28, 22)
         outer.addLayout(page_header(
-            "Dashboard",
-            "Your local Claude Code prompting habits — not an official Anthropic metric.",
+            "Dashboard Test",
+            "Your local Claude Code workflow habits — not an official Anthropic metric.",
         ))
 
         scroll = QScrollArea()
@@ -164,6 +166,11 @@ class Dashboard(QWidget):
                 lines.append("🧠  Context management may help — see the Context page.")
             for text in lines:
                 label = QLabel(text)
+                # UI stabilization pass (docs/UI_STABILIZATION_AUDIT.md,
+                # Issue 16): these lines are dynamically generated and can
+                # grow long (candidate counts, context note) — without
+                # word-wrap they forced an oversized page minimum width.
+                label.setWordWrap(True)
                 label.setStyleSheet(f"padding: 4px 0; color: {theme.TEXT_PRIMARY};")
                 self.opps_layout.addWidget(label)
 
@@ -173,6 +180,10 @@ class Dashboard(QWidget):
         state_text, state_color = _RUNTIME_STATE_TEXT.get(
             status.state, ("○ Unknown", theme.TEXT_MUTED)
         )
+        # A left-border status accent (Executive Dashboard pattern) so the
+        # runtime panel is scannable at a glance without reading its text —
+        # matches the same color already used for the state label below.
+        self.runtime_panel.setStyleSheet(theme.status_border_style(state_color))
         header_row = QHBoxLayout()
         state_label = QLabel(state_text)
         state_label.setStyleSheet(f"font-weight: 700; color: {state_color};")
@@ -186,6 +197,7 @@ class Dashboard(QWidget):
                 f"Current session: {s.prompts} prompt(s), {s.tool_calls} tool call(s), "
                 f"{s.reads} read(s), {s.edits} edit(s)"
             )
+            summary.setWordWrap(True)
             summary.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 12px;")
             self.runtime_layout.addWidget(summary)
             if status.signals:
@@ -199,3 +211,22 @@ class Dashboard(QWidget):
             note = QLabel("Runtime coaching unavailable — install hooks on the Runtime page.")
             note.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 12px;")
             self.runtime_layout.addWidget(note)
+
+        # Phase 4C, Step 5/11 ("first migration slice"): one small,
+        # additive readout of which Coach backend this app is currently
+        # using — genuinely sourced via a real HTTP call
+        # (controller.coach_backend_summary() -> backend_client.health())
+        # when a service is reachable, proving the Desktop can act as an
+        # HTTP client of the standalone service. Everything above this
+        # (recommendations, stats, habit trends, opportunities, and the
+        # connection-state line itself) is untouched — still the existing
+        # direct coach.db/analyzer reads, which already reflect a
+        # standalone service's writes for free since both share one
+        # database file. See docs/DESKTOP_SERVICE_MIGRATION.md.
+        backend = self.controller.coach_backend_summary()
+        backend_color = theme.GOOD if backend["reachable"] else theme.TEXT_MUTED
+        mode_text = backend_mode_label(backend["mode"])
+        backend_label = QLabel(f"Coach Service: {mode_text}\n{backend['detail']}")
+        backend_label.setWordWrap(True)
+        backend_label.setStyleSheet(f"color: {backend_color}; font-size: 11px; margin-top: 4px;")
+        self.runtime_layout.addWidget(backend_label)

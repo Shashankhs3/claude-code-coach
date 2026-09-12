@@ -9,9 +9,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from claude_code_coach.database import db as db_module
-from claude_code_coach.runtime import event_parser, hook_installer, runtime_analyzer
+from claude_code_coach.runtime import event_parser, hook_installer, runtime_analyzer, session_title
 from claude_code_coach.runtime.event_source import HookFileEventSource, NullRuntimeEventSource
-from claude_code_coach.runtime.models import ConnectionState, RuntimeEventType
+from claude_code_coach.runtime.models import ConnectionState, RuntimeEvent, RuntimeEventType
 
 
 class TempDbTestCase(unittest.TestCase):
@@ -362,6 +362,82 @@ class TestRuntimeCoachStatus(TempDbTestCase):
         coach = RuntimeCoach(source=NullRuntimeEventSource())
         self.assertEqual(coach.poll_and_store(), 0)
         self.assertEqual(coach.status().state, ConnectionState.UNAVAILABLE)
+
+    def test_session_title_falls_back_to_task_type_by_default(self):
+        # Content collection is off by default (event_parser.py), so the
+        # real V4 path from a real hook payload should land on the
+        # task_type tier, never crash, and never require the raw prompt.
+        from claude_code_coach.runtime.event_parser import parse_hook_payload
+        from claude_code_coach.runtime.runtime_coach import RuntimeCoach
+        db_module.init_db()
+        event = parse_hook_payload({
+            "hook_event_name": "UserPromptSubmit", "session_id": "s1",
+            "prompt": "Please help me debug why the build keeps failing.",
+        }, collect_content=False)
+        self.assertIsNone(event.content)
+        db_module.insert_runtime_event(event)
+
+        coach = RuntimeCoach(source=self._real_but_empty_source())
+        status = coach.status()
+        self.assertIsNotNone(status.current_session)
+        self.assertEqual(status.current_session.title, "Debugging session")
+
+    def test_session_title_uses_real_text_when_opted_in(self):
+        from claude_code_coach.runtime.event_parser import parse_hook_payload
+        from claude_code_coach.runtime.runtime_coach import RuntimeCoach
+        db_module.init_db()
+        event = parse_hook_payload({
+            "hook_event_name": "UserPromptSubmit", "session_id": "s1",
+            "prompt": "Fix the Dashboard warning shown on reconnect.",
+        }, collect_content=True)
+        db_module.insert_runtime_event(event)
+
+        coach = RuntimeCoach(source=self._real_but_empty_source())
+        status = coach.status()
+        self.assertEqual(status.current_session.title, "Fix the Dashboard warning shown on reconnect")
+
+    def test_session_traversal_no_cross_session_leakage(self):
+        # Two distinct sessions, each with its own first prompt — looking up
+        # session A must never return session B's title/stats, and vice
+        # versa (spec section 14/15).
+        from claude_code_coach.runtime.event_parser import parse_hook_payload
+        from claude_code_coach.runtime.runtime_coach import RuntimeCoach
+        db_module.init_db()
+        db_module.insert_runtime_event(parse_hook_payload({
+            "hook_event_name": "UserPromptSubmit", "session_id": "session-a",
+            "prompt": "Fix the Dashboard warning.",
+        }, collect_content=True))
+        db_module.insert_runtime_event(parse_hook_payload({
+            "hook_event_name": "UserPromptSubmit", "session_id": "session-b",
+            "prompt": "Investigate the login test failure.",
+        }, collect_content=True))
+
+        events_a = [
+            RuntimeEvent(id=r.get("id"), received_at=r["received_at"], session_id=r["session_id"],
+                         event_type=RuntimeEventType.from_hook_name(r["event_type"]),
+                         tool_name=r.get("tool_name") or None, metadata=r.get("metadata") or {},
+                         content=r.get("content"))
+            for r in db_module.fetch_runtime_events("session-a")
+        ]
+        events_b = [
+            RuntimeEvent(id=r.get("id"), received_at=r["received_at"], session_id=r["session_id"],
+                         event_type=RuntimeEventType.from_hook_name(r["event_type"]),
+                         tool_name=r.get("tool_name") or None, metadata=r.get("metadata") or {},
+                         content=r.get("content"))
+            for r in db_module.fetch_runtime_events("session-b")
+        ]
+
+        title_a = session_title.title_for_session(events_a)
+        title_b = session_title.title_for_session(events_b)
+
+        self.assertEqual(title_a, "Fix the Dashboard warning")
+        self.assertEqual(title_b, "Investigate the login test failure")
+        self.assertNotEqual(title_a, title_b)
+
+        session_a = db_module.get_runtime_session("session-a")
+        session_b = db_module.get_runtime_session("session-b")
+        self.assertEqual(session_a["session_id"], "session-a")
+        self.assertEqual(session_b["session_id"], "session-b")
 
 
 if __name__ == "__main__":

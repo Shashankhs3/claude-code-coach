@@ -1,10 +1,19 @@
-# VS Code Integration (Phase 2)
+# VS Code Integration (Phase 2, Phase 3, Phase 3B, Phase 4B, Phase 4C)
 
 Developer reference for the local HTTP bridge between the Claude Code
 Coach desktop app and the `vscode-extension/` companion extension. For the
 design rationale and alternatives considered, see
 [VSCODE_INTEGRATION_ARCHITECTURE.md](VSCODE_INTEGRATION_ARCHITECTURE.md)
 (Phase 1). This document covers what was actually built.
+
+**Phase 4C update**: "Desktop app" below now means *whichever process
+started the Coach service* — the desktop app's embedded copy, or a
+standalone `python -m claude_code_coach.service` process (Phase 4A). VS
+Code has never cared which one it is (Phase 4B confirmed this); as of
+Phase 4C, the desktop app itself doesn't fully either — see
+[DESKTOP_SERVICE_MIGRATION.md](DESKTOP_SERVICE_MIGRATION.md). Exactly one
+process owns the background drain loop at a time regardless of how many
+Coach-aware processes are running.
 
 ## Architecture
 
@@ -15,7 +24,10 @@ Claude Code CLI
 hook_receiver.py  →  runtime_events/*.jsonl
       │
       ▼
-Desktop app (claude_code_coach/service/, started from app.py)
+Coach service (claude_code_coach/service/) — desktop-embedded (app.py)
+OR standalone (python -m claude_code_coach.service, Phase 4A) — exactly
+one of these is running at a time; app.py checks before starting its own
+(Phase 4C)
       │
       ├── background drain loop (lifecycle.py) — persists new
       │   hook events into coach.db every 2s, independent of
@@ -23,8 +35,11 @@ Desktop app (claude_code_coach/service/, started from app.py)
       │
       └── HTTP server (server.py) — 127.0.0.1 only, token-authed
               │
-              ▼
-      vscode-extension/ (separate npm project)
+      ┌───────┴───────┐
+      ▼               ▼
+vscode-extension/   Desktop app (a pure HTTP client when it detected
+(unchanged)         an already-running service instead of starting
+                     its own — service/client.py, Phase 4C)
 ```
 
 The service is a thin, Qt-free façade (`coach_service.py`) over the
@@ -264,16 +279,247 @@ No Windows Firewall or Defender prompt appeared at any point during this
 process — consistent with `127.0.0.1`-only listeners not being flagged the
 way an externally-reachable listener would be.
 
+## Phase 3B: real-time coaching interventions
+
+> **These are heuristic, evidence-based coaching signals — not proof that
+> Claude Code made a mistake.** Every warning is generated only from
+> `RuntimeSignal`s the existing V5 `runtime_analyzer.py` already computes
+> from real observed hook events (see Phase 1/3 above). No new analysis
+> logic, no new "overall score", and no Python file was touched to build
+> this layer — see "V5 changes" below.
+
+### What's new
+
+- A native VS Code notification when a HIGH-confidence signal is the
+  current primary signal for this workspace's session.
+- A `Coach: Attention` status-bar state, distinct from `Ready`/`Offline`/
+  `Paused`.
+- `Claude Code Coach: Pause Coaching` / `...Resume Coaching` commands.
+- Action buttons on the panel's "Current Coaching" card for signals that
+  have a concrete next step.
+- Two new settings (`claudeCodeCoach.coaching.*`) and deterministic,
+  documented deduplication so the same warning is never spammed.
+
+### Tier mapping (no new scoring system)
+
+`RuntimeSignal.level` — V5's own field — **is** the product tier. Nothing
+in the extension recomputes or overrides it:
+
+| V5 `level` | Product tier | Panel | Status bar | Native notification |
+|---|---|---|---|---|
+| `high` | HIGH — action needed | Leading coaching card | `Attention` | Yes, unless `notificationLevel` is `off` |
+| `medium` | MEDIUM — consider changing | Leading coaching card (no `Attention` promotion) | stays `Ready` | Only if `notificationLevel` is `highAndMedium` |
+| `low` | LOW / positive | Leading card or "N more signal(s)" list | stays `Ready` | Never, regardless of settings |
+
+**Honest note on `verification_missing`**: `runtime_analyzer.py`'s
+`verification_signal()` always emits this at `level="medium"`, never
+`"high"` (see `tests/test_v5.py`). It therefore surfaces as a MEDIUM-tier
+coaching event here too — panel card and no `Attention` promotion unless
+the user opts into "High + Medium" notifications. This is a deliberate
+choice to respect V5's own confidence rating rather than have the
+TypeScript layer second-guess it with a per-kind override.
+
+### Priority selector
+
+`pickPrimarySignal()` in `src/coaching.ts` sorts by `level` (high > medium
+> low) and returns one signal — the same function the panel and the
+background notification path both call, so there is exactly one selector,
+not two. Signals never combine into a new number; the loser signals stay
+visible underneath in the panel's "N more signal(s)" list.
+
+### Notification rules
+
+`shouldNotify()` (`src/coaching.ts`) is the exact, deterministic rule:
+
+1. Paused → never.
+2. `claudeCodeCoach.coaching.notificationsEnabled` is `false` → never.
+3. `level: "low"` (including every positive signal) → never, regardless of
+   settings — the spec is explicit that routine/positive events must not
+   interrupt.
+4. `level: "high"` → notify unless `notificationLevel` is `"off"`.
+5. `level: "medium"` → notify only if `notificationLevel` is
+   `"highAndMedium"`.
+6. Already notified for this exact (workspace, session, signal kind)
+   within the dedup window → never (see below).
+
+The notification text is one line: `"Claude Code Coach: ⚠ " + signal.message`
+— V5's own message, never a fabricated paragraph. It carries two actions,
+**View Details** (opens/focuses the Coach panel) and **Dismiss**; either
+one, or simply closing the toast, has the same effect — the dedup entry is
+recorded at send time, so the toast never repeats within the window
+regardless of how it was closed. Dismissing a notification never hides the
+signal from the panel — the panel always reflects the latest real state.
+
+### Deduplication
+
+`CoachingStateStore` (`src/coachingState.ts`) keys each notification by
+`workspaceFolder :: sessionId :: signal.kind` and stores only a last-sent
+timestamp — **never prompt text or file content**. The window is a
+documented constant, **15 minutes**
+(`coachingState.DEDUPE_WINDOW_MS`). A different kind, a different session,
+or a different workspace is never suppressed by another key's entry.
+Signals are not tracked on a timer — the primary signal is always
+recomputed fresh from the latest `/session` response, so a warning
+disappears from the panel/status-bar the moment V5 stops reporting that
+`kind` (e.g. `verification_missing` is replaced by `verification_done` the
+moment V5 observes a test run; `broad_exploration` disappears once enough
+narrowing has happened for V5 to stop flagging it).
+
+### Status bar states
+
+| State | Meaning | Icon |
+|---|---|---|
+| `Ready` | Connected, no HIGH-tier signal active | `$(check)` |
+| `Attention` | A HIGH-tier signal is the current primary signal | `$(alert)`, warning background |
+| `Offline` | Desktop app/service unreachable | `$(circle-slash)`, warning background |
+| `Paused` | User ran Pause Coaching | `$(debug-pause)` |
+
+Every state uses a distinct icon glyph (not color alone), so Attention and
+Offline stay distinguishable regardless of theme.
+
+### Pause / Resume
+
+`claudeCodeCoach.pauseCoaching` / `claudeCodeCoach.resumeCoaching` flip a
+boolean in `context.globalState`. **Scope note (deliberate, not an
+oversight)**: `globalState` is one store per extension per machine, so
+Pause is machine-wide — every VS Code window on this machine, not just the
+current workspace. While paused: no notifications, no `Attention` status,
+and the panel shows a clear "⏸ Coaching paused" notice in place of the
+intervention card. Runtime event collection itself is entirely unaffected
+— it's still governed by the existing V5 hook-installation setting, per
+the spec's explicit instruction not to silently disable hooks. The full
+signal list remains visible (collapsed) under the paused notice, so pausing
+suppresses the *interruption*, never the underlying evidence.
+
+### Action buttons
+
+Added to the panel's primary coaching card only where a concrete next step
+exists — never filler advice:
+
+| Signal kind | Action(s) |
+|---|---|
+| `broad_exploration` | **Inspect Prompt**, **View Session** |
+| `context_noisy`, `context_growth`, `verification_missing` | **View Session** |
+| `skill_underused` (with a resolvable `evidence.skill` match in the environment scan) | **View Skill** |
+| anything else | none |
+
+None of these execute the suggestion automatically — they only open the
+relevant panel section or the real file V5 already found.
+
+### Configuration
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `claudeCodeCoach.coaching.notificationsEnabled` | `true` | Master switch for native notifications. |
+| `claudeCodeCoach.coaching.notificationLevel` | `"highOnly"` | `"highOnly"` \| `"highAndMedium"` \| `"off"`. |
+
+### Privacy
+
+No change to the local-first architecture: no cloud API, no telemetry, no
+new external calls. `CoachingStateStore` persists only signal `kind`
+strings, workspace folder paths, session ids, and timestamps in VS Code's
+own `globalState` — never prompt text, file content, or anything from a
+notification's message beyond what the panel already displays.
+
+## Phase 4B: the extension no longer assumes the desktop app
+
+**The desktop GUI is no longer a prerequisite.** The extension already
+discovered "whichever service wrote `service.json`" from Phase 2 onward —
+`coachClient.ts` never actually checked *which* process that was — but its
+messaging and one real behavior still assumed the desktop app specifically.
+Both are fixed this phase, with no change to `app.py` or any other
+desktop-side file:
+
+1. **Stale discovery is now actually detected (Step 3/4).**
+   `readDiscovery()` now verifies the reported `pid` is a live process
+   (`windowRegistry.ts`'s existing `isProcessAlive()`, reused rather than
+   duplicated) and that `api_version` is one this client understands,
+   before ever returning a usable discovery result. Either failure is
+   reported through a new `getLastDiscoveryIssue()` — surfaced in both the
+   status bar's offline tooltip and the panel's offline message — instead
+   of the generic "Offline" covering three different real situations
+   ("nothing has run yet" vs. "the process that wrote this file was killed
+   and left it behind" vs. "this service speaks a version I don't"). A
+   real forcefully-killed standalone service (Phase 4A's own scenario) was
+   used to verify this end to end this session: `service.json` was left
+   behind, and both the Python-side `read_discovery_file()` and the
+   TypeScript-side `readDiscovery()` correctly reported it as stale.
+
+2. **`openDesktopCoach()` no longer conflates "a service is reachable"
+   with "the desktop app is running" (Step 15, a real bug fix).** Prior
+   versions showed "desktop app is already running" whenever *any* Coach
+   service answered — which became actively wrong once a standalone
+   service could be the one answering instead. The command now always
+   gives the same honest guidance ("start the desktop app from wherever
+   you normally launch it"), since the discovery contract has no field
+   that distinguishes a desktop-embedded service from a standalone one,
+   and inventing one wasn't necessary to fix the actual bug.
+
+3. **Desktop-specific wording removed from status bar / panel / error
+   messages** (`statusBar.ts`, `coachPanel.ts`, `extension.ts`'s
+   `inspectPrompt`) — "Coach service" replaces "desktop app" throughout,
+   since either process satisfies every one of these states identically.
+
+**Everything else was already desktop-agnostic and needed no change**:
+`coachClient.ts`'s HTTP layer, `fileSignal.ts`'s signal-file watcher,
+notification/dedup logic (`coaching.ts`/`coachingState.ts`), Pause/Resume,
+and the status bar's Ready/Attention/Paused states all already operated
+purely on the discovery file + HTTP responses, with no branch anywhere
+that checked "is this the desktop." Phase 3B's full notification behavior
+(tier mapping, 15-minute dedup, quiet-by-default) is unchanged and was not
+touched.
+
+**Verified this session, with the desktop GUI never opened**: a real
+`python -m claude_code_coach.service` process, real `hook_receiver.py`
+hook events, a real drain into SQLite, and a real Node.js HTTP client
+(mirroring `coachClient.ts`'s own request logic) reading the real
+`service.json` and getting back real `/api/v1/health` and `/api/v1/session`
+responses — including a session whose `cwd` came from a real `SessionStart`
+event. See STANDALONE_SERVICE.md's Phase 4B note and the final report for
+the full verification log.
+
 ## Known limitations
 
-- The service only runs while the desktop app is running — not a
-  standalone background daemon. A future phase could decouple these.
+- The service only runs while something (the desktop app, or
+  `python -m claude_code_coach.service`, Phase 4A) is running it — there
+  is no auto-starting background daemon yet. Steps toward that are
+  tracked in STANDALONE_SERVICE.md's "Known limitations."
+- **Update (Phase 4C)**: the desktop app now *can* act as a client of a
+  standalone service — it checks for one before starting its own embedded
+  copy. See [DESKTOP_SERVICE_MIGRATION.md](DESKTOP_SERVICE_MIGRATION.md)
+  for what this means for VS Code (nothing — it never depended on which
+  process was serving `service.json`) and what's still temporary (the
+  embedded copy is not removed; an already-running desktop does not
+  retroactively hand off to a standalone service that appears later).
+- No automated `npm test` run in this sandboxed environment — the
+  downloaded VS Code test binary rejects the test runner's CLI flags here
+  (same symptom reproduced across Phase 3B and Phase 4A/4B). New Phase 4B
+  tests compile cleanly and were verified by direct code reading plus the
+  real (non-mocked) end-to-end check described above; a real interactive
+  Extension Development Host run is still the way to close this gap fully.
 - No real-time push (WebSocket) — near-real-time via the signal-file
   watcher, typically sub-second in practice but not a hard guarantee.
 - Multi-root workspaces use the first folder only.
 - The window registry (`windowRegistry.ts`) is written but not yet
   consumed by anything — forward-looking groundwork for a future
   "route a notification to the window that owns this session" feature.
+- **Pause is machine-wide, not per-workspace** (Phase 3B) — pausing while
+  working in Project A also pauses coaching in every other open VS Code
+  window on the same machine. A documented scope choice, not a bug.
+- **Notification dedup state is shared across windows on the same
+  machine** (Phase 3B) — if the exact same workspace+session is somehow
+  open in two windows at once, a notification shown in one suppresses the
+  repeat in the other within the 15-minute window. This is the intended
+  effect of avoiding duplicate interruptions, not a routing flaw, but is
+  worth naming since it differs from a strictly per-window design.
 - `@vscode/test-electron`'s automated headless test run could not complete
-  in this development environment (see above); the extension was instead
-  verified via a real interactive Extension Development Host.
+  in this development environment — reproduced again for Phase 3B (this
+  time the downloaded `Code.exe` rejects every CLI flag with `bad option:`,
+  a different symptom from the Phase 2 "missing resources/app payload"
+  failure, but the same underlying category: this sandboxed environment
+  cannot successfully drive the downloaded VS Code test binary). All
+  Phase 3B TypeScript compiles cleanly (`tsc -p ./`, zero errors) and the
+  full existing + new test suites are written to the same standard as
+  Phase 2/3's; they were verified by direct code reading and by mirroring
+  Phase 2's precedent of falling back to a real interactive Extension
+  Development Host for end-to-end confirmation.

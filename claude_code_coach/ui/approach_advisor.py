@@ -5,7 +5,9 @@ prompt-quality breakdown; that lives in the Prompt Inspector).
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout, QLabel, QPushButton, QScrollArea, QTextEdit, QVBoxLayout, QWidget,
+)
 
 from . import theme
 from .widgets import Panel, SectionHeader, page_header
@@ -24,6 +26,19 @@ class ApproachAdvisor(QWidget):
             "how to work with Claude Code on it, not a prompt-quality score.",
         ))
 
+        # Shared page-container pattern (same as Dashboard/Context/Settings/
+        # etc.): body scrolls inside the page instead of the page itself
+        # being forced to the window's full height. Without this, this page
+        # was the one place content could run under the viewport/taskbar on
+        # shorter screens, since QStackedWidget doesn't scroll on its own.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
         self.input = QTextEdit()
         self.input.setPlaceholderText(
             "e.g. Investigate why our API tests are failing.\n"
@@ -31,16 +46,16 @@ class ApproachAdvisor(QWidget):
             "and frontend."
         )
         self.input.setMaximumHeight(140)
-        outer.addWidget(self.input)
+        content_layout.addWidget(self.input)
 
         button_row = QHBoxLayout()
         self.button = QPushButton("Get Recommended Approach")
         self.button.clicked.connect(self._on_get_approach)
         button_row.addWidget(self.button)
         button_row.addStretch()
-        outer.addLayout(button_row)
+        content_layout.addLayout(button_row)
 
-        outer.addWidget(SectionHeader("RECOMMENDED APPROACH"))
+        content_layout.addWidget(SectionHeader("RECOMMENDED APPROACH"))
         panel = Panel()
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(18, 16, 18, 16)
@@ -48,7 +63,7 @@ class ApproachAdvisor(QWidget):
         self.output.setReadOnly(True)
         self.output.setMinimumHeight(260)
         panel_layout.addWidget(self.output)
-        outer.addWidget(panel, 1)
+        content_layout.addWidget(panel, 1)
 
         note = QLabel(
             "Evaluated independently across three evidence sources: this task, your "
@@ -57,7 +72,7 @@ class ApproachAdvisor(QWidget):
         )
         note.setWordWrap(True)
         note.setStyleSheet(f"color: {theme.TEXT_FAINT}; font-size: 10.5px;")
-        outer.addWidget(note)
+        content_layout.addWidget(note)
 
     def refresh(self) -> None:
         pass

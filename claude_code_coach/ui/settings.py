@@ -4,10 +4,11 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton,
-    QVBoxLayout, QWidget,
+    QScrollArea, QVBoxLayout, QWidget,
 )
 
-from .widgets import Panel, SectionHeader, page_header
+from . import theme
+from .widgets import Panel, SectionHeader, backend_mode_label, page_header
 
 _RETENTION_OPTIONS = [
     ("7 days", 7), ("30 days", 30), ("90 days", 90), ("Forever", None),
@@ -23,6 +24,21 @@ class Settings(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 22, 28, 22)
         outer.addLayout(page_header("Settings", "Local database, privacy, and data management."))
+
+        # UI stabilization pass (docs/UI_STABILIZATION_AUDIT.md, Issues 1/2):
+        # this page's five panels stacked directly in `outer` had no way to
+        # shrink below their combined natural height (789px measured before
+        # this fix) — taller than many real screens' available work area,
+        # which is what pushed the whole main window's minimum size past the
+        # taskbar. Same QScrollArea pattern ui/runtime.py already uses.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        outer_scrolled = QVBoxLayout(content)
+        outer_scrolled.setSpacing(14)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+        outer = outer_scrolled
 
         # -- Privacy -----------------------------------------------------------
         outer.addWidget(SectionHeader("PRIVACY"))
@@ -84,12 +100,22 @@ class Settings(QWidget):
         runtime_note.setWordWrap(True)
         runtime_layout.addWidget(runtime_note)
 
-        self.collect_content_checkbox = QCheckBox(
-            "Store prompt/response text (off by default — only derived signals like word "
-            "count and task type are kept otherwise)"
-        )
+        # UI stabilization pass (docs/UI_STABILIZATION_AUDIT.md, Issue 2): a
+        # QCheckBox's own label cannot word-wrap in Qt — a long sentence here
+        # forced this whole page (and, via QStackedWidget, the whole app) to
+        # a 1522px-wide minimum. Kept short; the explanation moved to a
+        # wrapping QLabel underneath instead.
+        self.collect_content_checkbox = QCheckBox("Store prompt/response text")
         self.collect_content_checkbox.toggled.connect(self._on_toggle_collect_content)
         runtime_layout.addWidget(self.collect_content_checkbox)
+
+        collect_content_detail = QLabel(
+            "Off by default — only derived signals like word count and task type are "
+            "kept otherwise."
+        )
+        collect_content_detail.setWordWrap(True)
+        collect_content_detail.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 11px;")
+        runtime_layout.addWidget(collect_content_detail)
 
         retention_row = QHBoxLayout()
         retention_row.addWidget(QLabel("Runtime history retention:"))
@@ -102,6 +128,40 @@ class Settings(QWidget):
         runtime_layout.addLayout(retention_row)
 
         outer.addWidget(runtime_panel)
+
+        # -- Coach Service (Phase 4C, Step 16) --------------------------------------
+        outer.addWidget(SectionHeader("COACH SERVICE"))
+        backend_panel = Panel()
+        backend_layout = QVBoxLayout(backend_panel)
+        backend_layout.setContentsMargins(18, 16, 18, 16)
+
+        self.backend_status_label = QLabel("")
+        self.backend_status_label.setWordWrap(True)
+        backend_layout.addWidget(self.backend_status_label)
+
+        # Phase 4E (docs/SHARED_COACH_STATE.md §5): shared across every
+        # client of the same Coach backend — pausing here also pauses VS
+        # Code, and vice versa, once both point at the same standalone
+        # service. Never stops hook event collection or the service itself,
+        # only coaching interventions (status bar Attention, notifications,
+        # the leading signal below on the Runtime page).
+        #
+        # UI stabilization pass (docs/UI_STABILIZATION_AUDIT.md, Issue 2):
+        # same "QCheckBox text can't wrap" defect as collect_content_checkbox
+        # above — kept short, detail moved to a wrapping QLabel underneath.
+        self.pause_coaching_checkbox = QCheckBox("Pause Coaching")
+        self.pause_coaching_checkbox.toggled.connect(self._on_toggle_pause_coaching)
+        backend_layout.addWidget(self.pause_coaching_checkbox)
+
+        pause_coaching_detail = QLabel(
+            "Shared with VS Code — suppresses coaching interventions only; runtime "
+            "observation continues."
+        )
+        pause_coaching_detail.setWordWrap(True)
+        pause_coaching_detail.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 11px;")
+        backend_layout.addWidget(pause_coaching_detail)
+
+        outer.addWidget(backend_panel)
 
         # -- Database ------------------------------------------------------------
         outer.addWidget(SectionHeader("DATABASE"))
@@ -157,6 +217,25 @@ class Settings(QWidget):
         self.collect_content_checkbox.blockSignals(True)
         self.collect_content_checkbox.setChecked(self.controller.runtime_collect_content())
         self.collect_content_checkbox.blockSignals(False)
+
+        # Phase 4C, Step 16: useful backend status, not a redesign — same
+        # controller.coach_backend_summary() the Dashboard's readout uses
+        # (single source of truth for "which backend am I using right
+        # now"), just rendered here as a couple of plain lines.
+        backend = self.controller.coach_backend_summary()
+        status_word = "Connected" if backend["reachable"] else "Unavailable"
+        self.backend_status_label.setText(
+            f"Coach Service: {status_word}\n"
+            f"Backend: {backend_mode_label(backend['mode'])}\n"
+            f"{backend['detail']}"
+        )
+        self.backend_status_label.setStyleSheet(
+            f"color: {theme.GOOD if backend['reachable'] else theme.TEXT_MUTED}; font-size: 12px;"
+        )
+
+        self.pause_coaching_checkbox.blockSignals(True)
+        self.pause_coaching_checkbox.setChecked(self.controller.coaching_paused())
+        self.pause_coaching_checkbox.blockSignals(False)
 
         current_days = self.controller.runtime_retention_days()
         self.retention_combo.blockSignals(True)
@@ -232,6 +311,10 @@ class Settings(QWidget):
 
     def _on_toggle_collect_content(self, checked: bool) -> None:
         self.controller.set_runtime_collect_content(checked)
+
+    def _on_toggle_pause_coaching(self, checked: bool) -> None:
+        self.controller.set_coaching_paused(checked)
+        self.controller.refresh_all()
 
     def _on_retention_changed(self, index: int) -> None:
         _label, days = _RETENTION_OPTIONS[index]

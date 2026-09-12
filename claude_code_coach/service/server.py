@@ -72,10 +72,15 @@ ROUTES = {
 
 # Phase 3: POST route table -> callable(payload_dict) -> JSON-safe dict.
 # Same one-line-into-coach_service discipline as ROUTES above.
+# Phase 4E adds /api/v1/pause: the one shared, mutable piece of coaching
+# state a client with no direct coach.db access (VS Code) needs to change
+# remotely — not destructive, just a preference toggle (docs/
+# SHARED_COACH_STATE.md §14).
 POST_ROUTES = {
     "/api/v1/analyze": coach_service.analyze,
     "/api/v1/suggest": coach_service.suggest,
     "/api/v1/approach": coach_service.approach,
+    "/api/v1/pause": coach_service.set_paused,
 }
 
 

@@ -153,3 +153,32 @@ def approach(payload: dict) -> dict:
 def new_events_since_last_drain() -> int:
     """Used by the background signal loop — see service/lifecycle.py."""
     return _drain_runtime_events()
+
+
+def set_paused(payload: dict) -> dict:
+    """Phase 4E: POST /api/v1/pause — the one shared, mutable piece of
+    coaching state VS Code needs to change remotely (it has no direct
+    coach.db access, unlike Desktop). Writes the same `coaching_paused`
+    setting Desktop's own Settings checkbox writes directly (see
+    docs/SHARED_COACH_STATE.md §5) and nudges the existing signal file so a
+    watching VS Code window refreshes promptly instead of waiting for its
+    next poll tick — reuses the mechanism Step 11 requires, never a second
+    one. Never touches runtime_enabled/hook event collection/the service
+    itself, per the ABSOLUTE RULE that pause only suppresses
+    interventions."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("paused"), bool):
+        raise InvalidRequestError("'paused' must be a boolean")
+    paused = payload["paused"]
+
+    from ..runtime.runtime_coach import set_coaching_paused
+    set_coaching_paused(paused)
+
+    from . import lifecycle as _lifecycle
+    try:
+        _lifecycle.notify_state_changed("pause_changed")
+    except Exception:  # noqa: BLE001 - the write above already succeeded; a
+        # failed signal-file nudge must not turn a real state change into
+        # an error response (the next poll tick still picks it up).
+        pass
+
+    return {"coaching_paused": paused}

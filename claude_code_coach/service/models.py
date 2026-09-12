@@ -33,6 +33,7 @@ def status_response(*, connected: bool, runtime_configured: bool, runtime_state:
 def session_summary_dict(summary) -> dict:
     return {
         "session_id": summary.session_id,
+        "title": summary.title,
         "started_at": summary.started_at,
         "last_event_at": summary.last_event_at,
         "prompts": summary.prompts,
@@ -60,6 +61,14 @@ def signal_dict(signal) -> dict:
 
 
 def session_response(runtime_status, *, cwd: str | None) -> dict:
+    # Phase 4E (docs/SHARED_COACH_STATE.md §3/4/5): both new fields are
+    # additive/backward-compatible — an older client simply never reads
+    # them. `primary_signal` reuses signal_dict on the exact same
+    # RuntimeSignal objects already in `signals`; no second selection
+    # system, no field the existing V5 model can't already support.
+    from ..runtime.signal_priority import pick_primary_signal
+
+    primary = pick_primary_signal(runtime_status.signals)
     return {
         "cwd": cwd,
         "connection_state": _enum_value(runtime_status.state),
@@ -69,6 +78,8 @@ def session_response(runtime_status, *, cwd: str | None) -> dict:
         ),
         "context_health": runtime_status.context_health,
         "signals": [signal_dict(s) for s in runtime_status.signals],
+        "primary_signal": signal_dict(primary) if primary else None,
+        "coaching_paused": runtime_status.paused,
     }
 
 

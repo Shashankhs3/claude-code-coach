@@ -548,5 +548,132 @@ class TestFullAcceptanceFlow(GuiTestCase):
         window.close()
 
 
+class TestUiStabilization(GuiTestCase):
+    """docs/UI_STABILIZATION_AUDIT.md — regression guards for the root
+    causes found and fixed in that pass, so they can't silently reappear."""
+
+    def test_stylesheet_has_no_invalid_cursor_property(self):
+        # Issue 4: Qt Style Sheets do not support the CSS `cursor` property
+        # at all — it used to log "Unknown property cursor" once per
+        # matching rule. Pointer-cursor UX is restored via
+        # widgets.PointerCursorFilter instead (see the test below).
+        from claude_code_coach.ui import theme
+        self.assertNotIn("cursor:", theme.STYLESHEET)
+
+    def test_global_qwidget_rule_has_no_background(self):
+        # Issue 3: a blanket `QWidget { background: ... }` painted an
+        # opaque rectangle behind every plain QLabel, including ones sitting
+        # inside a white #Card/#Panel — the "grey box behind every value"
+        # bug. Every widget that should have a visible surface keeps its own
+        # specific rule (#Card, #Panel, #Sidebar, QMainWindow, inputs, ...).
+        from claude_code_coach.ui import theme
+        import re
+        match = re.search(r"QWidget\s*\{([^}]*)\}", theme.STYLESHEET)
+        self.assertIsNotNone(match, "the global QWidget rule must still exist")
+        self.assertNotIn("background", match.group(1))
+        # The rule must still set color/font-size — only background was removed.
+        self.assertIn("color", match.group(1))
+
+    def test_pointer_cursor_filter_sets_and_unsets_cursor(self):
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtWidgets import QPushButton
+        from claude_code_coach.ui.widgets import PointerCursorFilter
+
+        button = QPushButton("test")
+        button.unsetCursor()
+        filt = PointerCursorFilter(button)
+        button.installEventFilter(filt)
+
+        filt.eventFilter(button, QEvent(QEvent.Type.Enter))
+        self.assertEqual(button.cursor().shape(), Qt.CursorShape.PointingHandCursor)
+
+        filt.eventFilter(button, QEvent(QEvent.Type.Leave))
+        self.assertEqual(button.cursor().shape(), Qt.CursorShape.ArrowCursor)
+
+    def test_pointer_cursor_filter_ignores_disabled_widgets(self):
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtWidgets import QPushButton
+        from claude_code_coach.ui.widgets import PointerCursorFilter
+
+        button = QPushButton("test")
+        button.setEnabled(False)
+        button.unsetCursor()
+        filt = PointerCursorFilter(button)
+
+        filt.eventFilter(button, QEvent(QEvent.Type.Enter))
+        self.assertEqual(button.cursor().shape(), Qt.CursorShape.ArrowCursor)
+
+    def test_main_window_minimum_size_fits_common_screens(self):
+        # Issue 1/17/18: before this pass, MainWindow.minimumSizeHint() was
+        # (1836, 846) — taller than the available work area on many real
+        # displays once the taskbar is subtracted, which is what forced a
+        # "maximized" window under the taskbar. Regression-guards the fix
+        # without hardcoding an exact pixel target (screen sizes vary) —
+        # just that it stays well below the old broken values.
+        from claude_code_coach.ui.main_window import MainWindow
+        window = MainWindow()
+        hint = window.minimumSizeHint()
+        self.assertLess(hint.height(), 700, "sidebar/page minimum height regressed")
+        self.assertLess(hint.width(), 1700, "sidebar/page minimum width regressed")
+        window.close()
+
+    def test_sidebar_nav_list_is_scrollable_not_unbounded(self):
+        # The sidebar's 16 nav buttons + group headers, stacked directly,
+        # used to force an 846px unshrinkable minimum height by themselves
+        # — present on every page, not just one. Now wrapped in a
+        # QScrollArea so the window can be shorter than the full nav list.
+        from PySide6.QtWidgets import QFrame, QScrollArea
+        from claude_code_coach.ui.main_window import MainWindow
+        window = MainWindow()
+        sidebar = window.findChild(QFrame, "Sidebar")
+        self.assertIsNotNone(sidebar)
+        self.assertTrue(sidebar.findChildren(QScrollArea), "sidebar nav list must scroll")
+        self.assertLess(sidebar.minimumSizeHint().height(), 400)
+        window.close()
+
+    def test_settings_page_is_scrollable_and_has_small_minimum_height(self):
+        # Issue 2: Settings had no QScrollArea at all — its full, uncollapsed
+        # content height (789px measured) was an unshrinkable minimum.
+        from PySide6.QtWidgets import QScrollArea
+        from claude_code_coach.ui.settings import Settings
+        page = Settings(self._controller())
+        page.refresh()
+        self.assertTrue(page.findChildren(QScrollArea), "Settings must scroll")
+        self.assertLess(page.minimumSizeHint().height(), 300)
+
+    def test_settings_checkboxes_have_short_labels_with_wrapped_detail(self):
+        # Issue 2: QCheckBox text cannot word-wrap in Qt — a long sentence
+        # forces the whole page's minimum width to fit it on one line
+        # (1522px/1314px measured). Labels must stay short; the full
+        # explanation lives in a separate, word-wrapped QLabel instead.
+        from claude_code_coach.ui.settings import Settings
+        page = Settings(self._controller())
+        self.assertLess(len(page.collect_content_checkbox.text()), 40)
+        self.assertLess(len(page.pause_coaching_checkbox.text()), 40)
+
+    def test_workshop_checkbox_has_short_label(self):
+        from claude_code_coach.ui.workshop import Workshop
+        page = Workshop(self._controller())
+        self.assertLess(len(page.toggle.text()), 40)
+
+    def test_runtime_privacy_label_wraps(self):
+        # Issue 2/16: missing setWordWrap forced this single line to a
+        # 1430px-wide minimum — one of the two biggest contributors to the
+        # whole app's minimum window size (Issue 1). Located by its known
+        # text prefix since it has no object name.
+        from PySide6.QtWidgets import QLabel
+        from claude_code_coach.ui.runtime import Runtime
+        page = Runtime(self._controller())
+        privacy_labels = [
+            lbl for lbl in page.findChildren(QLabel) if lbl.text().startswith("\U0001F512")
+        ]
+        self.assertEqual(len(privacy_labels), 1)
+        self.assertTrue(privacy_labels[0].wordWrap())
+
+    def _controller(self):
+        from claude_code_coach.ui.controller import CoachController
+        return CoachController()
+
+
 if __name__ == "__main__":
     unittest.main()

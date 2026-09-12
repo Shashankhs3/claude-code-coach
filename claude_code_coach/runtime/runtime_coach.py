@@ -13,12 +13,35 @@ from pathlib import Path
 
 from claude_code_coach.database import db
 
-from . import event_store, hook_installer, runtime_analyzer
+from . import event_store, hook_installer, runtime_analyzer, session_title
 from .event_source import HookFileEventSource, NullRuntimeEventSource, RuntimeEventSource
 from .models import ConnectionState, RuntimeEvent, RuntimeEventType, RuntimeStatus, SessionSummary
 
 FRESHNESS_WINDOW = timedelta(minutes=15)
 RECENT_PROMPT_LIMIT = 500
+
+# Phase 4E (docs/SHARED_COACH_STATE.md §5): one shared, additive DB setting —
+# read/written exactly like runtime_enabled/runtime_collect_content already
+# are, so Desktop (direct db.set_setting) and the standalone service
+# (through the HTTP layer below) always agree, for free, as long as they
+# share one coach.db. Deliberately a *different* setting from
+# runtime_enabled: pausing must never stop hook event collection or the
+# service itself (ABSOLUTE RULE — see set_coaching_paused's docstring).
+_COACHING_PAUSED_SETTING = "coaching_paused"
+
+
+def is_coaching_paused() -> bool:
+    return db.get_setting(_COACHING_PAUSED_SETTING, "0") == "1"
+
+
+def set_coaching_paused(enabled: bool) -> None:
+    """Suppresses coaching *interventions* (status bar Attention, native
+    notifications, Desktop's leading-signal framing) across every client
+    reading this coach.db. Never touches `runtime_enabled`, the hook event
+    source, or the drain loop — signals keep being computed and returned
+    while paused; only whether a client treats one as an active
+    interruption changes."""
+    db.set_setting(_COACHING_PAUSED_SETTING, "1" if enabled else "0")
 
 
 def _events_dir() -> Path:
@@ -78,18 +101,21 @@ class RuntimeCoach:
         signals: list = []
         context_health = None
         if current:
+            session_events = [
+                _event_from_db_row(r) for r in db.fetch_runtime_events(current["session_id"])
+            ]
+
             session_summary = SessionSummary(
                 session_id=current["session_id"], started_at=current["started_at"],
-                last_event_at=current["last_event_at"], prompts=current["prompts"],
+                last_event_at=current["last_event_at"],
+                title=session_title.title_for_session(session_events),
+                prompts=current["prompts"],
                 tool_calls=current["tool_calls"], searches=current["searches"],
                 reads=current["reads"], edits=current["edits"], commands=current["commands"],
                 skills_or_agents=current["skills_or_agents"], compactions=current["compactions"],
                 ended=bool(current["ended"]),
             )
 
-            session_events = [
-                _event_from_db_row(r) for r in db.fetch_runtime_events(current["session_id"])
-            ]
             latest_prompt_context = None
             for e in reversed(session_events):
                 if e.event_type == RuntimeEventType.USER_PROMPT_SUBMIT:
@@ -120,6 +146,7 @@ class RuntimeCoach:
             current_session=session_summary,
             signals=signals,
             context_health=context_health,
+            paused=is_coaching_paused(),
         )
 
     def _connection_state(self, last_event_at: str | None) -> ConnectionState:

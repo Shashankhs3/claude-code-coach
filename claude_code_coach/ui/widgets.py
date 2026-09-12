@@ -7,18 +7,77 @@ any child Qt object (QLabel, QTimer, layouts, etc.).
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
+    QProgressBar, QPushButton, QRadioButton, QVBoxLayout, QWidget,
 )
 
+from claude_code_coach.service import BackendMode
+
 from . import theme
+
+# UI stabilization pass (docs/UI_STABILIZATION_AUDIT.md, Issue 4): Qt Style
+# Sheets do not support the CSS `cursor` property — theme.py used to declare
+# `cursor: pointer;` on these same widget types, which is silently invalid
+# and logs "Unknown property cursor" once per matching rule (confirmed via
+# QT_FORCE_STDERR_LOGGING=1). A pointer cursor on hover must be set via
+# QWidget.setCursor() instead. Rather than patch every construction site
+# across ~15 files, one event filter installed once on the QApplication
+# (see app.py) restores the same UX for every instance of these widget
+# types, existing and future, application-wide.
+_POINTER_CURSOR_TYPES = (QPushButton, QCheckBox, QRadioButton, QComboBox)
+
+
+class PointerCursorFilter(QObject):
+    """Sets a pointing-hand cursor while the mouse is over any
+    QPushButton/QCheckBox/QRadioButton/QComboBox, restoring their default
+    arrow cursor on leave. Install once via
+    ``app.installEventFilter(PointerCursorFilter(app))``."""
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt override signature
+        if isinstance(watched, _POINTER_CURSOR_TYPES):
+            if event.type() == QEvent.Type.Enter and watched.isEnabled():
+                watched.setCursor(Qt.CursorShape.PointingHandCursor)
+            elif event.type() == QEvent.Type.Leave:
+                watched.unsetCursor()
+        return super().eventFilter(watched, event)
+
+
+def _apply_elevation(widget: QWidget) -> None:
+    """Real card elevation — QSS has no box-shadow, so Panel/StatCard/
+    CandidateCard use this instead of relying on the 1px border alone for
+    depth. Subtle by design (small blur, low opacity): this is a
+    professional data-tool surface, not a marketing card that should pop
+    off the page.
+    """
+    effect = QGraphicsDropShadowEffect(widget)
+    effect.setBlurRadius(16)
+    effect.setOffset(0, 2)
+    effect.setColor(QColor(15, 23, 42, 26))  # slate-900 @ ~10% opacity
+    widget.setGraphicsEffect(effect)
+
+# Phase 4D-A, Step 11/12: one shared, plain-language label per explicit
+# backend mode — used by both Dashboard and Settings so the two pages
+# never drift into describing the same state two different ways. No raw
+# enum text is ever shown to the user.
+_BACKEND_MODE_TEXT = {
+    BackendMode.STANDALONE: "Standalone",
+    BackendMode.EMBEDDED_FALLBACK: "Compatibility fallback",
+    BackendMode.UNAVAILABLE: "Unavailable",
+}
+
+
+def backend_mode_label(mode: BackendMode) -> str:
+    return _BACKEND_MODE_TEXT.get(mode, "Unknown")
 
 
 class StatCard(QFrame):
     def __init__(self, title: str, value: str, subtitle: str = "", parent=None):
         super().__init__(parent)
         self.setObjectName("Card")
+        _apply_elevation(self)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(4)
@@ -140,6 +199,7 @@ class Panel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("Panel")
+        _apply_elevation(self)
 
 
 class CandidateCard(Panel):
