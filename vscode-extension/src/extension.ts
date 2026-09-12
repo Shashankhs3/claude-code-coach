@@ -11,6 +11,7 @@ import {
 } from "./coaching";
 import { CoachingStateStore } from "./coachingState";
 import { FileSignalWatcher } from "./fileSignal";
+import { ensureServiceRunning } from "./serviceLauncher";
 import { ConnectionStatus, RuntimeSignal } from "./types";
 import { removeWindowRegistryEntry, writeWindowRegistryEntry } from "./windowRegistry";
 
@@ -31,6 +32,16 @@ function notificationSettings(): { enabled: boolean; level: NotificationLevelSet
   };
 }
 
+/** Escape hatch (Part 4/8): on by default, since the whole point of
+ * bundling the service is that ordinary users never have to think about
+ * it — but a developer running their own standalone/desktop instance, or
+ * anyone who'd rather this extension never spawn a background process on
+ * their machine, can turn it off. Read fresh on every refresh tick, same
+ * as notificationSettings(). */
+function autoStartEnabled(): boolean {
+  return vscode.workspace.getConfiguration("claudeCodeCoach").get<boolean>("autoStartService", true);
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const client = new CoachClient();
   const coachingState = new CoachingStateStore(context.globalState);
@@ -39,7 +50,23 @@ export function activate(context: vscode.ExtensionContext): void {
   writeWindowRegistryEntry();
 
   const refresh = async () => {
-    const discovery = readDiscovery();
+    let discovery = readDiscovery();
+
+    // Part 4 (auto-start): nothing usable is reachable yet — try the
+    // bundled service before reporting Offline, so an ordinary Marketplace
+    // install never requires the user to have run
+    // `python -m claude_code_coach.service` (or Python at all) themselves.
+    // ensureServiceRunning() is a strict no-op if a service is already
+    // reachable, if this platform has no bundled build, or if this window
+    // is already backing off after repeated failed attempts — it never
+    // spawns a second copy on top of something already running, and it
+    // never reports success on anything less than the same validated
+    // readDiscovery() check used everywhere else in this file.
+    if (!discovery && autoStartEnabled()) {
+      await ensureServiceRunning(context.extensionPath);
+      discovery = readDiscovery();
+    }
+
     if (!discovery) {
       // getLastDiscoveryIssue() is undefined for the routine "nothing is
       // running yet" case and set for a specific problem (stale discovery
@@ -129,7 +156,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   const inspectCommand = vscode.commands.registerCommand("claudeCodeCoach.inspectPrompt", () =>
-    inspectPrompt(client, coachingState),
+    inspectPrompt(client, coachingState, context.extensionPath),
   );
 
   const copySuggestionCommand = vscode.commands.registerCommand(
@@ -265,11 +292,19 @@ function maybeNotify(
  * the extension. If the Coach service isn't reachable, says so plainly
  * rather than prompting for text that could never be sent anywhere.
  */
-async function inspectPrompt(client: CoachClient, coachingState: CoachingStateStore): Promise<void> {
+async function inspectPrompt(
+  client: CoachClient,
+  coachingState: CoachingStateStore,
+  extensionPath: string,
+): Promise<void> {
+  if (!readDiscovery() && autoStartEnabled()) {
+    await ensureServiceRunning(extensionPath);
+  }
   if (!readDiscovery()) {
     void vscode.window.showWarningMessage(
-      "Claude Code Coach is offline — start the Coach service " +
-        "(`python -m claude_code_coach.service`, or the desktop app) to inspect a prompt.",
+      "Claude Code Coach is offline — the bundled Coach service could not be started " +
+        "(see Settings: Claude Code Coach › Auto Start Service). You can also run " +
+        "`python -m claude_code_coach.service`, or open the desktop app.",
     );
     return;
   }

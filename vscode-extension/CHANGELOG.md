@@ -29,6 +29,17 @@ documented here.
   to start the desktop app themselves. This is guidance text only —
   the extension cannot locate or launch the desktop app automatically,
   and does not claim to.
+- **Bundled Coach service (Windows)**: the extension now ships its own
+  self-contained Coach service executable and starts it automatically in
+  the background when no service (standalone or desktop) is already
+  reachable — no Python install required. Off by default only if you turn
+  it off (`claudeCodeCoach.autoStartService`); a service you already run
+  yourself, or the desktop app, is always preferred and never duplicated.
+  Never connects on a bare open port — only on the same validated
+  discovery check (shape, live PID, compatible API version) every other
+  code path here already uses. See `packaging/README.md` for how this is
+  built and why it needed a real fix on the Python side, not just a
+  packaging trick, to keep working once frozen.
 
 **Fixed:**
 

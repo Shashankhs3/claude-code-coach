@@ -60,6 +60,11 @@
     "configuration": {
       "title": "Claude Code Coach",
       "properties": {
+        "claudeCodeCoach.autoStartService": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start the bundled Coach service in the background when no service (standalone or desktop) is already reachable. Never runs anything if a service is already running elsewhere, and never requires Python — the bundled service is a self-contained executable. Turn off if you always run your own standalone service or the desktop app, or if you'd rather this extension never start a background process."
+        },
         "claudeCodeCoach.pollIntervalSeconds": {
           "type": "number",
           "default": 5,

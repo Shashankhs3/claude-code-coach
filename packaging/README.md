@@ -64,3 +64,29 @@ which exercises this without needing an actual frozen build.
 The zip is the only thing meant to leave this machine — `dist/` and
 `packaging/build/` are both gitignored; nothing here gets committed except
 the build scripts and the small `assets/icon.ico`.
+
+## Bundling the Coach service into the VS Code extension
+
+```powershell
+.\packaging\build_vscode_service.ps1
+```
+
+A third, separate PyInstaller build (`service_entry.py` -> `CoachService.exe`,
+same onedir approach) placed at
+`vscode-extension\bundled\win32-x64\CoachService\`, which
+`vscode-extension\src\serviceLauncher.ts` spawns automatically when it
+activates and no Coach service (standalone or desktop) is already
+reachable — so an ordinary Marketplace install never needs Python. This is
+the *service* only (`claude_code_coach/service/__main__.py`, zero PySide6
+import), not the desktop GUI — about 15 MB on disk versus the desktop
+build's ~116 MB, entirely because it never pulls in Qt.
+
+Run this before `npx vsce package` inside `vscode-extension/` — the .vsix
+step picks up whatever is already sitting in `bundled/`, it doesn't build
+it. `vscode-extension/bundled/` is gitignored; only the two build scripts
+and their small shared `assets/icon.ico` are.
+
+See `serviceLauncher.ts`'s module docstring for the auto-start design (why
+it never connects on a bare open port, how multiple VS Code windows racing
+at startup are handled, and why a spawned service is deliberately never
+killed when the window that started it closes).

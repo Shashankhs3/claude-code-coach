@@ -1,5 +1,9 @@
-# Only out/*.js (the compiled extension) needs to ship. Everything below
-# is development-only and must never end up in the .vsix.
+# out/*.js (the compiled extension) and bundled/** (the bundled Coach
+# service executable — see packaging/build_vscode_service.ps1) need to
+# ship. Everything below is development-only and must never end up in the
+# .vsix. bundled/** is deliberately NOT excluded here — vsce includes
+# anything not listed, and this is the one binary this package actually
+# needs at runtime.
 
 .vscode-test/**
 .vscode/**
