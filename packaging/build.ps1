@@ -87,6 +87,7 @@ python -m PyInstaller --noconfirm --clean `
   --name $DistName `
   --windowed `
   --icon $IconIco `
+  --add-data "$IconIco;." `
   --version-file $VersionFile `
   --distpath $DistPath `
   --workpath (Join-Path $BuildDir "app_work") `
