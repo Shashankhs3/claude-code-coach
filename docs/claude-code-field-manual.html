@@ -1,0 +1,1013 @@
+<title>Claude Code Field Manual</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,500;0,600;0,700;1,500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  /* ---------- Tokens ---------- */
+  :root{
+    --paper:#f5f6f8; --surface:#ffffff; --surface-2:#eef0f3;
+    --border:#e2e4e8; --border-strong:#cbd0d8;
+    --text:#1a1d23; --text-muted:#5a616e; --text-faint:#9aa1ac;
+    --accent:#c1602f; --accent-deep:#a94f24; --accent-soft:#fbeee6;
+    --good:#1e8e5a; --good-soft:#e5f3ec;
+    --warn:#b7791f; --warn-soft:#fbf1de;
+    --bad:#c0392b; --bad-soft:#fbe9e7;
+    --info:#2563eb; --info-soft:#e8f0fe;
+    --shadow: rgba(21,23,28,.10);
+    --rail-bg:#15171c; --rail-hover:#20232a; --rail-text:#e7e9ee; --rail-text-muted:#8a909c; --rail-active:#e07a45;
+    --font-display:"Fraunces", Georgia, serif;
+    --font-body:"IBM Plex Sans", -apple-system, Segoe UI, sans-serif;
+    --font-mono:"IBM Plex Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#0d0e11; --surface:#171a1f; --surface-2:#1c1f26;
+      --border:#2b2f38; --border-strong:#3a3f4a;
+      --text:#e7e9ee; --text-muted:#9096a1; --text-faint:#666c75;
+      --accent:#e07a45; --accent-deep:#c1602f; --accent-soft:#33221a;
+      --good:#3fc98a; --good-soft:#123322;
+      --warn:#e0ab4d; --warn-soft:#3a2c10;
+      --bad:#e6685a; --bad-soft:#3a1815;
+      --info:#7aa2ff; --info-soft:#16233d;
+      --shadow: rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0d0e11; --surface:#171a1f; --surface-2:#1c1f26;
+    --border:#2b2f38; --border-strong:#3a3f4a;
+    --text:#e7e9ee; --text-muted:#9096a1; --text-faint:#666c75;
+    --accent:#e07a45; --accent-deep:#c1602f; --accent-soft:#33221a;
+    --good:#3fc98a; --good-soft:#123322;
+    --warn:#e0ab4d; --warn-soft:#3a2c10;
+    --bad:#e6685a; --bad-soft:#3a1815;
+    --info:#7aa2ff; --info-soft:#16233d;
+    --shadow: rgba(0,0,0,.5);
+  }
+
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  @media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto;} }
+  body{
+    background:var(--paper); color:var(--text); font-family:var(--font-body);
+    margin:0; line-height:1.55; -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3{font-family:var(--font-display); text-wrap:balance; margin:0 0 .4em; color:var(--text);}
+  p{margin:0 0 1em; max-width:38em;}
+  a{color:var(--accent-deep);}
+  :root[data-theme="dark"] a, @media (prefers-color-scheme:dark){ a{color:var(--accent);} }
+  code, .mono{font-family:var(--font-mono);}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:3px;}
+
+  .byline{
+    font-family:var(--font-mono); font-size:.7rem; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--text-faint); font-weight:500; margin-bottom:.6em;
+  }
+  .present-mode .byline{font-size:.8rem;}
+  .kicker{
+    font-family:var(--font-mono); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--accent-deep); font-weight:600; margin-bottom:.9em; display:flex; align-items:center; gap:.6em;
+  }
+  :root[data-theme="dark"] .kicker, @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .kicker{color:var(--accent);} }
+  .kicker::before{content:""; width:1.4em; height:1px; background:var(--accent-deep); display:inline-block;}
+
+  /* ---------- Layout shell ---------- */
+  .shell{display:flex; min-height:100vh;}
+  .rail{
+    width:266px; flex:0 0 266px; background:var(--rail-bg); color:var(--rail-text);
+    position:sticky; top:0; align-self:flex-start; height:100vh; overflow-y:auto;
+    padding:28px 20px 20px; display:flex; flex-direction:column; gap:20px;
+  }
+  .rail-brand{display:flex; flex-direction:column; gap:2px; padding:0 4px 16px; border-bottom:1px solid #262a33;}
+  .rail-mark{font-family:var(--font-mono); font-size:1.3rem; color:var(--rail-active);}
+  .rail-name{font-family:var(--font-display); font-weight:600; font-size:1.15rem; color:#fff;}
+  .rail-sub{font-size:.72rem; color:var(--rail-text-muted); font-family:var(--font-mono);}
+  .rail-nav{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; flex:1;}
+  .rail-nav a{
+    display:flex; gap:.7em; align-items:baseline; color:var(--rail-text-muted); text-decoration:none;
+    font-size:.86rem; padding:8px 10px; border-radius:7px; border-left:2px solid transparent;
+  }
+  .rail-nav a .n{font-family:var(--font-mono); font-size:.72rem; color:var(--rail-text-muted); min-width:1.6em;}
+  .rail-nav a:hover{background:var(--rail-hover); color:var(--rail-text);}
+  .rail-nav a.active{background:var(--rail-hover); color:#fff; border-left-color:var(--rail-active);}
+  .rail-nav a.active .n{color:var(--rail-active);}
+  .rail-foot{font-size:.68rem; color:var(--rail-text-muted); padding:12px 4px 0; border-top:1px solid #262a33; font-family:var(--font-mono);}
+  .rail-progress{height:3px; background:#262a33; border-radius:2px; overflow:hidden;}
+  .rail-progress-fill{height:100%; width:0%; background:var(--rail-active); transition:width .25s ease;}
+
+  main{flex:1; min-width:0; padding:0 28px;}
+  .wrap{max-width:740px; margin:0 auto; padding-block:64px;}
+  section{padding-block:56px; border-bottom:1px solid var(--border);}
+  section:last-of-type{border-bottom:none;}
+
+  .stat-strip{display:flex; flex-wrap:wrap; gap:14px; margin-top:1.6em;}
+  .stat{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 16px; min-width:130px;}
+  .stat b{display:block; font-family:var(--font-mono); font-size:1.35rem; color:var(--accent-deep);}
+  :root[data-theme="dark"] .stat b, @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .stat b{color:var(--accent);}}
+  .stat span{font-size:.76rem; color:var(--text-muted);}
+
+  .badge{
+    display:inline-flex; align-items:center; gap:.4em; font-family:var(--font-mono); font-size:.72rem;
+    font-weight:600; padding:3px 9px; border-radius:20px; letter-spacing:.02em;
+  }
+  .badge.doc{background:var(--info-soft); color:var(--info);}
+  .badge.heuristic{background:var(--surface-2); color:var(--text-muted); border:1px solid var(--border-strong);}
+
+  .card{background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:22px 24px; box-shadow:0 1px 2px var(--shadow);}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  .grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:14px;}
+  @media (max-width:640px){ .grid2,.grid3{grid-template-columns:1fr;} }
+
+  /* loop diagram */
+  .loop-wrap{display:flex; gap:28px; align-items:center; flex-wrap:wrap; margin-top:1.6em;}
+  .loop-diagram{flex:0 0 260px; max-width:100%;}
+  .loop-list{flex:1; min-width:220px; display:flex; flex-direction:column; gap:10px;}
+  .loop-step{display:flex; gap:12px; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:var(--surface); transition:border-color .3s, background .3s;}
+  .loop-step .k{font-family:var(--font-mono); color:var(--text-faint); font-size:.8rem; width:1.4em;}
+  .loop-step.active{border-color:var(--accent); background:var(--accent-soft);}
+  .loop-step.active .k{color:var(--accent-deep);}
+  .loop-step h4{margin:0 0 2px; font-size:.95rem; font-family:var(--font-body); font-weight:600;}
+  .loop-step p{margin:0; font-size:.83rem; color:var(--text-muted);}
+
+  /* context budget bar */
+  .seg-group{display:flex; gap:6px; flex-wrap:wrap; margin:.4em 0 1.1em;}
+  .seg{
+    font-family:var(--font-mono); font-size:.74rem; padding:6px 12px; border-radius:20px;
+    border:1px solid var(--border-strong); background:var(--surface); color:var(--text-muted); cursor:pointer;
+  }
+  .seg.active{background:var(--text); color:var(--paper); border-color:var(--text);}
+  :root[data-theme="dark"] .seg.active, @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .seg.active{background:var(--accent); color:#0d0e11; border-color:var(--accent);}}
+  .budget-bar{display:flex; height:38px; border-radius:8px; overflow:hidden; border:1px solid var(--border); margin:1em 0;}
+  .budget-bar > div{transition:width .35s ease; display:flex; align-items:center; justify-content:center; min-width:0; overflow:hidden;}
+  .budget-legend{display:flex; flex-wrap:wrap; gap:12px 18px; font-size:.78rem; color:var(--text-muted);}
+  .budget-legend span{display:inline-flex; align-items:center; gap:6px;}
+  .budget-legend i{width:10px; height:10px; border-radius:3px; display:inline-block;}
+
+  /* prompt scorer */
+  .scorer{margin-top:1.4em;}
+  textarea#promptInput{
+    width:100%; min-height:110px; font-family:var(--font-mono); font-size:.88rem; padding:14px;
+    border-radius:10px; border:1px solid var(--border-strong); background:var(--surface); color:var(--text); resize:vertical;
+  }
+  .scorer-actions{display:flex; gap:10px; margin:10px 0 4px; flex-wrap:wrap;}
+  .btn{
+    font-family:var(--font-mono); font-size:.78rem; padding:8px 14px; border-radius:8px; border:1px solid var(--border-strong);
+    background:var(--surface); color:var(--text); cursor:pointer;
+  }
+  .btn:hover{border-color:var(--accent);}
+  .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .score-panel{display:flex; gap:22px; align-items:center; margin:1.2em 0; flex-wrap:wrap;}
+  .score-num{font-family:var(--font-display); font-weight:700; font-size:3rem; line-height:1;}
+  .score-band{font-family:var(--font-mono); font-size:.8rem; padding:4px 12px; border-radius:20px; font-weight:600;}
+  .dims{display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-top:1em;}
+  @media (max-width:640px){.dims{grid-template-columns:1fr;}}
+  .dim{border:1px solid var(--border); border-radius:10px; padding:11px 13px; background:var(--surface);}
+  .dim .row{display:flex; justify-content:space-between; align-items:baseline; gap:8px;}
+  .dim .name{font-weight:600; font-size:.85rem; text-transform:capitalize;}
+  .dim .pill{font-family:var(--font-mono); font-size:.68rem; padding:2px 9px; border-radius:20px; white-space:nowrap;}
+  .pill.present{background:var(--good-soft); color:var(--good);}
+  .pill.missing{background:var(--bad-soft); color:var(--bad);}
+  .pill.na{background:var(--surface-2); color:var(--text-muted);}
+  .dim .why{font-size:.78rem; color:var(--text-muted); margin-top:6px; display:none;}
+  .dim.show-why .why{display:block;}
+
+  /* levers */
+  .chip-row{display:flex; flex-wrap:wrap; gap:8px; margin:1.2em 0;}
+  .chip{
+    border:1px solid var(--border-strong); background:var(--surface); border-radius:20px; padding:8px 14px;
+    font-size:.82rem; cursor:pointer; color:var(--text);
+  }
+  .chip:hover{border-color:var(--accent);}
+  .chip.active{background:var(--accent); color:#fff; border-color:var(--accent);}
+  .lever-grid{display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-top:1.2em;}
+  @media (max-width:900px){.lever-grid{grid-template-columns:repeat(2,1fr);}}
+  @media (max-width:520px){.lever-grid{grid-template-columns:1fr;}}
+  .lever{border:1px solid var(--border); border-radius:12px; padding:14px; background:var(--surface); opacity:.55; transition:opacity .25s, border-color .25s, transform .25s;}
+  .lever h4{margin:0 0 4px; font-size:.92rem;}
+  .lever p{font-size:.78rem; color:var(--text-muted); margin:0;}
+  .lever.hit{opacity:1; border-color:var(--accent); transform:translateY(-2px); box-shadow:0 4px 14px var(--shadow);}
+  .rule-strip{font-family:var(--font-mono); font-size:.82rem; background:var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:12px 16px; margin-top:14px; min-height:1.4em;}
+
+  /* myths */
+  .myth{border:1px solid var(--border); border-radius:12px; background:var(--surface); margin-bottom:12px; overflow:hidden; cursor:pointer;}
+  .myth .face{padding:16px 18px; display:flex; gap:12px; align-items:flex-start;}
+  .myth .tag{font-family:var(--font-mono); font-size:.68rem; padding:2px 9px; border-radius:20px; white-space:nowrap; margin-top:2px;}
+  .myth .tag.m{background:var(--bad-soft); color:var(--bad);}
+  .myth .tag.r{background:var(--good-soft); color:var(--good);}
+  .myth .reality{display:none;}
+  .myth.open .myth-face{display:none;}
+  .myth.open .reality{display:flex;}
+  .myth-hint{font-size:.72rem; color:var(--text-faint); padding:0 18px 12px; font-family:var(--font-mono);}
+
+  /* tri-state legend */
+  .tri{display:flex; flex-direction:column; gap:10px; margin-top:1.2em;}
+  .tri-row{display:flex; gap:14px; align-items:flex-start; border:1px solid var(--border); border-radius:10px; padding:12px 14px; background:var(--surface);}
+  .tri-row .tag{flex:0 0 130px; font-family:var(--font-mono); font-size:.72rem; font-weight:700; padding:4px 8px; border-radius:6px; text-align:center;}
+  .tag.detected{background:var(--good-soft); color:var(--good);}
+  .tag.possible{background:var(--info-soft); color:var(--info);}
+  .tag.inferred{background:var(--warn-soft); color:var(--warn);}
+  .tag.unknown{background:var(--surface-2); color:var(--text-muted);}
+
+  pre.term{
+    background:var(--rail-bg); color:#d7dae0; border-radius:10px; padding:16px 18px; overflow-x:auto;
+    font-family:var(--font-mono); font-size:.82rem; line-height:1.6; margin:1em 0;
+  }
+  pre.term .c{color:#7fbf7f;}
+  pre.term .p{color:#e07a45;}
+
+  ul.tick{padding-left:0; list-style:none; margin:1em 0;}
+  ul.tick li{padding-left:1.5em; position:relative; margin-bottom:.5em;}
+  ul.tick li::before{content:"→"; position:absolute; left:0; color:var(--accent-deep); font-family:var(--font-mono);}
+
+  footer{padding:40px 0 20px; font-size:.8rem; color:var(--text-faint);}
+
+  /* presenter arrows */
+  .presenter{
+    position:fixed; right:22px; bottom:22px; z-index:30; display:flex; flex-direction:column; gap:8px;
+    align-items:center;
+  }
+  .presenter button{
+    width:46px; height:46px; border-radius:50%; border:1px solid var(--border-strong); background:var(--surface);
+    color:var(--text); cursor:pointer; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 4px 14px var(--shadow); font-size:1.1rem; transition:transform .15s, border-color .15s;
+  }
+  .presenter button:hover{border-color:var(--accent); transform:translateY(-1px);}
+  .presenter button:disabled{opacity:.35; cursor:default; transform:none;}
+  .presenter .count{
+    font-family:var(--font-mono); font-size:.68rem; color:var(--text-muted); background:var(--surface);
+    border:1px solid var(--border); border-radius:20px; padding:3px 10px; white-space:nowrap;
+  }
+  #btnPresent{font-size:1rem;}
+  #btnPresent.active{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .presenter .exit-hint{
+    display:none; font-family:var(--font-mono); font-size:.62rem; color:var(--text-faint); white-space:nowrap;
+  }
+  html.present-mode .presenter .exit-hint{display:block;}
+  @media (max-width:900px){ .presenter{right:14px; bottom:14px;} .presenter button{width:40px; height:40px;} }
+
+  /* ---------- presentation mode: one section fills the screen ---------- */
+  html.present-mode, html.present-mode body{height:100%; overflow:hidden;}
+  .present-mode .rail{display:none;}
+  .present-mode main{padding:0;}
+  .present-mode .wrap{padding:0; max-width:none;}
+  .present-mode section{
+    display:none; position:fixed; inset:0; margin:0; border-bottom:none;
+    padding:6vh clamp(28px,7vw,100px); overflow-y:auto; background:var(--paper); z-index:5;
+  }
+  /* current slide becomes a flex column; the inner wrapper gets auto top/bottom
+     margins so short slides sit centered, while a slide taller than the screen
+     still scrolls cleanly from the top (auto margins resolve to 0 when the
+     content overflows — using justify-content:center here would instead clip
+     the top of an overflowing slide out of scroll reach). */
+  .present-mode section.current{display:flex; flex-direction:column;}
+  .present-mode section .slide-inner{
+    margin:auto 0; width:100%; max-width:980px; margin-inline:auto; position:relative; z-index:1;
+    display:flex; flex-direction:column; gap:6px;
+  }
+  .present-mode section h1{font-size:clamp(2.6rem,6.4vw,4.4rem);}
+  .present-mode section h2{font-size:clamp(2.2rem,5.4vw,3.6rem);}
+  .present-mode section p{font-size:1.18rem; max-width:44em; line-height:1.6;}
+  .present-mode .kicker{font-size:.92rem; margin-bottom:.2em;}
+  .present-mode .badge{font-size:.8rem; padding:5px 12px;}
+
+  /* a large, quiet slide number — fills the screen's negative space and
+     doubles as a position marker, since these 13 stops really are a sequence */
+  .slide-num{display:none;}
+  .present-mode section.current .slide-num{
+    display:block; position:absolute; top:6vh; right:clamp(28px,7vw,100px);
+    font-family:var(--font-mono); font-weight:600; font-size:clamp(3.2rem,9vw,7.5rem);
+    color:var(--border-strong); line-height:1; letter-spacing:-.03em; pointer-events:none; z-index:0;
+    user-select:none;
+  }
+
+  /* give the emptier stops more visual weight so a full screen never reads
+     as a stranded paragraph */
+  .present-mode .card{padding:28px 32px;}
+  .present-mode .stat{padding:18px 24px; min-width:160px;}
+  .present-mode .stat b{font-size:1.9rem;}
+  .present-mode .stat span{font-size:.85rem;}
+  .present-mode .loop-diagram{max-width:340px; flex:0 0 340px;}
+  .present-mode .loop-step h4{font-size:1.05rem;}
+  .present-mode .loop-step p{font-size:.92rem;}
+  .present-mode .budget-bar{height:52px;}
+  .present-mode .lever{padding:20px 18px;}
+  .present-mode .lever h4{font-size:1.05rem;}
+  .present-mode .lever p{font-size:.86rem;}
+  .present-mode .rule-strip{font-size:.95rem; padding:16px 20px;}
+  .present-mode .myth .face{padding:20px 24px;}
+  .present-mode .myth .face span:last-child{font-size:1.05rem;}
+  .present-mode pre.term{font-size:.92rem; padding:22px 26px;}
+  .present-mode .tri-row{padding:16px 18px;}
+  .present-mode ul.tick li{font-size:1.05rem; margin-bottom:.7em;}
+  .present-mode footer{font-size:.88rem;}
+
+  .present-mode .reveal{
+    opacity:0; transform:translateY(18px);
+    transition:opacity .55s cubic-bezier(.2,.8,.2,1), transform .55s cubic-bezier(.2,.8,.2,1);
+  }
+  .present-mode .reveal.in{opacity:1; transform:translateY(0);}
+  @media (prefers-reduced-motion: reduce){
+    .present-mode .reveal{transition:none !important; opacity:1 !important; transform:none !important;}
+  }
+
+  /* mobile rail collapse */
+  @media (max-width:900px){
+    .shell{flex-direction:column;}
+    .rail{
+      position:sticky; top:0; width:100%; height:auto; flex-direction:row; align-items:center;
+      overflow-x:auto; padding:12px 14px; gap:14px; z-index:20;
+    }
+    .rail-brand{display:none;}
+    .rail-nav{flex-direction:row; flex:0 0 auto;}
+    .rail-nav a{white-space:nowrap;}
+    .rail-foot,.rail-progress{display:none;}
+    main{padding:0 18px;}
+  }
+</style>
+
+<div class="shell">
+  <nav class="rail" aria-label="Workshop sections">
+    <div class="rail-brand">
+      <span class="rail-mark">◆</span>
+      <span class="rail-name">Field Manual</span>
+      <span class="rail-sub">CLAUDE CODE · CONTEXT · THE COACH</span>
+    </div>
+    <ol class="rail-nav">
+      <li><a href="#loop"><span class="n">01</span>The agent loop</a></li>
+      <li><a href="#context"><span class="n">02</span>Context ≠ tokens</a></li>
+      <li><a href="#task"><span class="n">03</span>Anatomy of a good task</a></li>
+      <li><a href="#investigate"><span class="n">04</span>Investigate first</a></li>
+      <li><a href="#sessions"><span class="n">05</span>Session hygiene</a></li>
+      <li><a href="#levers"><span class="n">06</span>Four levers</a></li>
+      <li><a href="#mcp"><span class="n">07</span>MCP &amp; permissions</a></li>
+      <li><a href="#verify"><span class="n">08</span>Done ≠ implemented</a></li>
+      <li><a href="#myths"><span class="n">09</span>Myth vs. reality</a></li>
+      <li><a href="#coach"><span class="n">10</span>Meet the Coach</a></li>
+      <li><a href="#install"><span class="n">11</span>Get it running</a></li>
+      <li><a href="#recap"><span class="n">12</span>Recap</a></li>
+    </ol>
+    <div class="rail-progress"><div class="rail-progress-fill" id="railFill"></div></div>
+    <div class="rail-foot" id="railCounter">§ 00 / 12</div>
+  </nav>
+
+  <main>
+    <div class="wrap">
+
+      <!-- HERO -->
+      <section id="top" style="border-bottom:none; padding-top:8px;">
+        <div class="byline">Curated by Shashank H S</div>
+        <div class="kicker">A workshop, in twelve stops</div>
+        <h1 style="font-size:clamp(2.1rem,5vw,3.1rem); font-weight:700;">Claude Code doesn't get<br><em style="font-style:italic; color:var(--accent-deep);">better by accident.</em></h1>
+        <p style="font-size:1.08rem; color:var(--text-muted); max-width:36em;">
+          It gets better when you manage <em>what it's looking at</em>, not just what you type — what goes
+          into context, how a task is framed, when a session should end. This page walks through that,
+          stop by stop, then hands you the tool built to coach you through it while you work.
+        </p>
+        <div class="stat-strip">
+          <div class="stat"><b>242</b><span>tests behind the Coach</span></div>
+          <div class="stat"><b>0</b><span>network calls it ever makes</span></div>
+          <div class="stat"><b>21</b><span>lessons in its own Workshop Mode</span></div>
+          <div class="stat"><b>12</b><span>stops on this page</span></div>
+        </div>
+      </section>
+
+      <!-- 01 LOOP -->
+      <section id="loop">
+        <div class="kicker">01 · The mechanism</div>
+        <h2>The agent loop</h2>
+        <span class="badge doc">Claude Code documented</span>
+        <p style="margin-top:.8em;">
+          Claude Code runs in a loop of reasoning and tool use — and <strong>everything that loop produces
+          becomes context for what comes next.</strong> A file it reads, a command it runs, a search result:
+          none of that disappears after the step that produced it. It's now part of what Claude is working
+          from for the rest of the session. That single fact is the reason almost everything else in this
+          workshop matters.
+        </p>
+        <div class="loop-wrap">
+          <svg class="loop-diagram" viewBox="0 0 260 260" aria-hidden="true">
+            <circle cx="130" cy="130" r="96" fill="none" stroke="var(--border)" stroke-width="2" stroke-dasharray="3 7"/>
+            <g id="loopNodes" font-family="IBM Plex Mono" font-size="11">
+              <!-- positions: top, right, bottom, left -->
+            </g>
+          </svg>
+          <div class="loop-list" id="loopList">
+            <div class="loop-step" data-i="0"><span class="k">1</span><div><h4>Prompt</h4><p>You state a task — the first thing added to context.</p></div></div>
+            <div class="loop-step" data-i="1"><span class="k">2</span><div><h4>Reason</h4><p>Claude decides what to do next, given everything in context so far.</p></div></div>
+            <div class="loop-step" data-i="2"><span class="k">3</span><div><h4>Act</h4><p>It calls a tool — reads a file, runs a search, edits code, calls an MCP server.</p></div></div>
+            <div class="loop-step" data-i="3"><span class="k">4</span><div><h4>Observe</h4><p>The tool's result is appended to context, and the loop repeats from Reason.</p></div></div>
+          </div>
+        </div>
+        <p style="font-size:.85rem; color:var(--text-faint);">Cycling automatically — hover to pause. Every full turn of this loop makes the working set bigger, never smaller, until something (you, or a session boundary) deliberately trims it.</p>
+      </section>
+
+      <!-- 02 CONTEXT -->
+      <section id="context">
+        <div class="kicker">02 · The resource you're actually managing</div>
+        <h2>Context is not the same thing as tokens</h2>
+        <span class="badge doc">Official Anthropic</span>
+        <p style="margin-top:.8em;">
+          Context is the model's <strong>full working set</strong> — not just your latest message. System
+          instructions, tool definitions, CLAUDE.md and any Skills loaded, every file read so far, the whole
+          conversation history, and every tool result all sit in it at once. Manage it for
+          <strong>focus and relevance first</strong> — don't assume a local estimate tells you the exact
+          billing math. <span class="badge heuristic" style="margin-left:4px;">Coach heuristic</span>
+        </p>
+        <p style="font-size:.85rem; color:var(--text-faint); margin-top:-.6em;">Try the toggles below — this is a teaching model, not a live token count.</p>
+        <div class="seg-group" id="segFiles">
+          <button class="seg active" data-val="few">Files read: few</button>
+          <button class="seg" data-val="many">Files read: many</button>
+        </div>
+        <div class="seg-group" id="segHistory">
+          <button class="seg active" data-val="fresh">History: fresh session</button>
+          <button class="seg" data-val="long">History: long session</button>
+        </div>
+        <div class="seg-group" id="segMcp">
+          <button class="seg active" data-val="none">MCP results: none</button>
+          <button class="seg" data-val="included">MCP results: included</button>
+        </div>
+        <div class="budget-bar" id="budgetBar"></div>
+        <div class="budget-legend" id="budgetLegend"></div>
+      </section>
+
+      <!-- 03 TASK -->
+      <section id="task">
+        <div class="kicker">03 · The interactive centerpiece</div>
+        <h2>The anatomy of a good task</h2>
+        <span class="badge doc">Claude Code documented</span>
+        <p style="margin-top:.8em;">
+          A good prompt reduces <strong>ambiguity</strong> — not necessarily length. Give direction where
+          judgment matters; don't micromanage the execution. Six things tend to separate a task Claude can
+          just start from one it has to guess its way through: a real <strong>goal</strong>, a
+          <strong>scope</strong>, a hint at where to <strong>investigate</strong>, any <strong>constraints</strong>,
+          a definition of <strong>done</strong>, and what <strong>output</strong> you actually want back.
+        </p>
+        <div class="scorer">
+          <textarea id="promptInput" spellcheck="false">Fix my project.</textarea>
+          <div class="scorer-actions">
+            <button class="btn" id="btnWeak">Load the weak example</button>
+            <button class="btn primary" id="btnStrong">Load the strong example</button>
+          </div>
+          <div class="score-panel">
+            <div class="score-num" id="scoreNum">20</div>
+            <div>
+              <div class="score-band" id="scoreBand">POOR</div>
+              <div style="font-size:.78rem; color:var(--text-faint); margin-top:4px;">same bands the desktop app uses: <span class="mono">≥90 EXCELLENT · ≥75 GOOD · ≥50 NEEDS IMPROVEMENT · below POOR</span></div>
+            </div>
+          </div>
+          <div class="dims" id="dimsGrid"></div>
+        </div>
+        <p style="font-size:.8rem; color:var(--text-faint); margin-top:1em;">
+          This is a lightweight teaching version of the check — click a "Missing" pill to see the exact
+          why/try wording Workshop Mode shows inside the real app. The desktop Coach's actual analyzer is
+          deterministic and rule-based, tuned against a 58-case benchmark; a dimension the current task
+          type doesn't need is scored <em>not applicable</em>, never as a penalty. The opening example above
+          is the literal sentence <span class="mono">"Fix my project."</span> from the app's own README — it
+          scores 20/100 POOR there too.
+        </p>
+      </section>
+
+      <!-- 04 INVESTIGATE -->
+      <section id="investigate">
+        <div class="kicker">04 · Before you touch anything</div>
+        <h2>Search → narrow → read → modify</h2>
+        <span class="badge doc">Claude Code documented</span>
+        <p style="margin-top:.8em;">Search-first suits a narrow task — find the two relevant files, then read only those. A broad task can justify broad reading (a security audit, a comparative research question) — the point isn't "read less," it's <strong>relevance</strong> being a deliberate judgment call, not a default. <span class="badge heuristic" style="margin-left:4px;">Coach heuristic</span></p>
+        <div class="grid2" style="margin-top:1em;">
+          <div class="card">
+            <h4 style="margin-top:0;">Narrow task</h4>
+            <p style="font-size:.85rem;">"The login form accepts empty passwords" → <strong>search</strong> for the login handler → <strong>narrow</strong> to one or two files → <strong>read</strong> those → <strong>modify</strong>. Reading the whole auth module first adds nothing but noise.</p>
+          </div>
+          <div class="card">
+            <h4 style="margin-top:0;">Justified-broad task</h4>
+            <p style="font-size:.85rem;">"Security-review the auth module" → broad reading <em>is</em> the task. The Coach's own signal for this is careful not to flag a legitimately broad task just for its file count.</p>
+          </div>
+        </div>
+        <p style="margin-top:1em;">And tool output is context too: ask for a targeted result, not a full dump you'll filter yourself after the fact. <span class="badge doc" style="margin-left:2px;">Official Anthropic</span></p>
+      </section>
+
+      <!-- 05 SESSIONS -->
+      <section id="sessions">
+        <div class="kicker">05 · Ending, continuing, compacting</div>
+        <h2>Session hygiene</h2>
+        <span class="badge doc">Official Anthropic</span>
+        <p style="margin-top:.8em;">Same coherent task → keep going. Different task → a fresh session usually serves you better, since unrelated history rarely helps the next thing. <span class="mono" style="font-size:.85rem;">/clear</span> resets context between unrelated tasks.</p>
+        <div class="grid2" style="margin-top:1em;">
+          <div class="card">
+            <h4 style="margin-top:0;">Same task, less baggage</h4>
+            <p style="font-size:.85rem;"><span class="mono">/compact</span> continues the same task with a lighter history — it does <strong>not</strong> erase your progress. It's only as useful as what you make sure survives it, so name what must carry forward: <span class="mono">/compact focus on the auth refactor, drop the exploratory reads</span>.</p>
+          </div>
+          <div class="card">
+            <h4 style="margin-top:0;">Different task entirely</h4>
+            <p style="font-size:.85rem;">Start over. Carrying yesterday's debugging session into today's unrelated feature work doesn't save time — it just makes the model sift through history that was never relevant to begin with.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 06 LEVERS -->
+      <section id="levers">
+        <div class="kicker">06 · Pick the right tool for the job</div>
+        <h2>Your four levers (and the fifth: just ask)</h2>
+        <span class="badge heuristic">Coach heuristic</span>
+        <p style="margin-top:.8em;">Tell me what you're dealing with, and this picks the lever:</p>
+        <div class="chip-row" id="leverChips">
+          <button class="chip" data-lever="hook">It must happen every time, no exceptions</button>
+          <button class="chip" data-lever="skill">It's a multi-step workflow I'll repeat</button>
+          <button class="chip" data-lever="agent">It needs substantial, independent digging</button>
+          <button class="chip" data-lever="claudemd">It's guidance every session should follow</button>
+          <button class="chip" data-lever="prompt">It's just this one task, right now</button>
+        </div>
+        <div class="lever-grid">
+          <div class="lever" data-lever="hook"><h4>Hook</h4><p>Fires on real Claude Code events (PreToolUse, Stop, …) via <span class="mono">settings.json</span>. Guarantees an action happens; an instruction only asks for it.</p></div>
+          <div class="lever" data-lever="skill"><h4>Skill</h4><p>A <span class="mono">SKILL.md</span> that packages a repeatable workflow so it's done consistently instead of re-explained every time.</p></div>
+          <div class="lever" data-lever="agent"><h4>Agent</h4><p>A delegated specialist for independent work — trades full detail for an isolated, distilled summary back.</p></div>
+          <div class="lever" data-lever="claudemd"><h4>CLAUDE.md</h4><p>Stated once, applies to every session — the place for durable project rules, not conditional or one-off detail.</p></div>
+          <div class="lever" data-lever="prompt"><h4>Just the prompt</h4><p>Most tasks are just this. Not everything deserves a Skill, an Agent, or a standing rule.</p></div>
+        </div>
+        <div class="rule-strip" id="ruleStrip">Rule to enforce → hook. Contextual know-how → Skill. Delegation → Agent. Always-on guidance → CLAUDE.md. This task → prompt.</div>
+      </section>
+
+      <!-- 07 MCP + PERMISSIONS -->
+      <section id="mcp">
+        <div class="kicker">07 · Reach and restraint</div>
+        <h2>MCP, and how much rope to give it</h2>
+        <span class="badge doc">Claude Code documented</span>
+        <div class="grid2" style="margin-top:.8em;">
+          <div class="card">
+            <h4 style="margin-top:0;">MCP</h4>
+            <p style="font-size:.85rem;">MCP connects Claude to capabilities beyond file edits and shell commands. Check what's actually connected before assuming a capability is missing — and add servers deliberately, not by default. Every connected server is more context and more surface area, not a free lunch.</p>
+          </div>
+          <div class="card">
+            <h4 style="margin-top:0;">Permissions</h4>
+            <p style="font-size:.85rem;">Match the permission mode to what's actually at stake in the work in front of you. Never bypass a safety check purely for convenience — the cost of a bad auto-approved action is almost always higher than the ten seconds a confirmation costs you.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 08 VERIFY -->
+      <section id="verify">
+        <div class="kicker">08 · The step people skip</div>
+        <h2>Implementation is not completion</h2>
+        <span class="badge doc">Claude Code documented</span>
+        <p style="margin-top:.8em;">A change without a check is not yet a finished change. Give Claude a pass-or-fail condition, not just a description of the goal — "done when <span class="mono">pytest tests/test_auth.py</span> passes," not "done when it looks right."</p>
+        <pre class="term">$ <span class="p">verification signal:</span> <span class="c">"No verification evidence observed"</span>
+  — the Coach's own Verification Coach, watched over a live session.
+  Never "you didn't test it" — it genuinely can't see a terminal
+  you ran outside the session, so it says only what it actually knows.</pre>
+      </section>
+
+      <!-- 09 MYTHS -->
+      <section id="myths">
+        <div class="kicker">09 · Five habits worth unlearning</div>
+        <h2>Myth vs. reality</h2>
+        <p style="margin-top:.8em;">Every myth here collapses the same way: it treats a situational trade-off as a universal rule. <span class="badge heuristic">Coach heuristic</span></p>
+        <div id="mythList"></div>
+      </section>
+
+      <!-- 10 COACH -->
+      <section id="coach">
+        <div class="kicker">10 · The tool this workshop leads to</div>
+        <h2>Meet Claude Code Coach</h2>
+        <p style="margin-top:.8em;">
+          Not a prompt checker — a workflow coach. Given what you're trying to accomplish, it tells you how
+          to actually work with Claude Code: prompt scoping and rewriting, an Approach Advisor spanning
+          prompt / environment / runtime evidence, Skill and Agent creation, and session-coherence and
+          verification coaching. <strong>Local-first, fully offline, no AI API</strong> — every suggestion
+          is regex/rule-based and fully explainable, and the in-app Context Efficiency Score is a
+          <strong>local coaching heuristic</strong>, never presented as an official Anthropic metric.
+        </p>
+        <div class="grid3" style="margin-top:1em;">
+          <div class="card"><h4 style="margin-top:0; font-size:.9rem;">WORK</h4><p style="font-size:.82rem;">Inspector · Approach Advisor · Sessions · Prompt History · Context</p></div>
+          <div class="card"><h4 style="margin-top:0; font-size:.9rem;">CAPABILITIES</h4><p style="font-size:.82rem;">Skills · Skill Creator · Agents · Agent Creator · Integrations · Environment</p></div>
+          <div class="card"><h4 style="margin-top:0; font-size:.9rem;">LEARNING</h4><p style="font-size:.82rem;">Habits · Workshop Mode — 21 levels, 57 lessons, a 21-question final exam</p></div>
+        </div>
+        <h4 style="margin-top:1.6em;">How it talks about what it finds</h4>
+        <p style="font-size:.85rem;">Nothing is invented — every claim is a real file found on disk, or explicitly labeled as the Coach's own inferred signal:</p>
+        <div class="tri">
+          <div class="tri-row"><span class="tag detected">DETECTED</span><span style="font-size:.85rem;">An actual Skill, Agent, CLAUDE.md, or MCP entry found on disk right now.</span></div>
+          <div class="tri-row"><span class="tag possible">POSSIBLE</span><span style="font-size:.85rem;">Your prompt looks related to a DETECTED resource — confidence-rated, medium or high.</span></div>
+          <div class="tri-row"><span class="tag inferred">INFERRED</span><span style="font-size:.85rem;">No real resource found, but a repeated pattern suggests one would help. Never "consider creating" something that already exists.</span></div>
+          <div class="tri-row"><span class="tag unknown">UNKNOWN</span><span style="font-size:.85rem;">Neither, or a specific scan item failed — surfaced as a scan warning, never guessed at.</span></div>
+        </div>
+      </section>
+
+      <!-- 11 INSTALL -->
+      <section id="install">
+        <div class="kicker">11 · Actually opening it</div>
+        <h2>Get it running</h2>
+        <pre class="term"><span class="c"># desktop app — Windows</span>
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python main.py
+
+<span class="c"># data stays local, always:</span>
+<span class="p">%USERPROFILE%\.claude_code_coach\coach.db</span></pre>
+        <ul class="tick">
+          <li>Open <strong>Environment</strong> → Choose Project Folder → Scan Again, so it's reading your real project instead of just your user-level setup.</li>
+          <li>Runtime coaching is <strong>off until you turn it on</strong> — Sessions → Install Runtime Hooks…</li>
+          <li>The Skill/Agent Creators never write a file until you press <strong>Save to Project</strong>, explicitly, every time.</li>
+        </ul>
+        <h4>In VS Code</h4>
+        <p style="font-size:.85rem;">Search the Marketplace for <strong>Claude Code Coach</strong> (publisher <span class="mono">ShashankHS</span>) — it connects to the locally running desktop app to surface live status and coaching right inside the editor.</p>
+        <p style="font-size:.78rem; color:var(--text-faint);">Independent, community project. Not affiliated with or endorsed by Anthropic.</p>
+      </section>
+
+      <!-- 12 RECAP -->
+      <section id="recap" style="border-bottom:none;">
+        <div class="kicker">12 · Before you go</div>
+        <h2>The whole workshop, in one line</h2>
+        <p style="margin-top:.8em; font-size:1.05rem;">Everything a tool call returns becomes context for what comes next — so the entire craft of working with Claude Code is deciding, on purpose, what earns a place in that working set.</p>
+        <h4>Homework</h4>
+        <ul class="tick">
+          <li>Open the Coach, run an Environment scan against a real project.</li>
+          <li>Paste one prompt you actually sent Claude Code today into the Inspector — read what it flags.</li>
+          <li>Turn on Workshop Mode and do Level 0.</li>
+        </ul>
+        <footer>
+          Claude Code Coach — an independent, community project. Not affiliated with or endorsed by
+          Anthropic. This page is unofficial workshop material; every documented claim above is cited to
+          its source, every heuristic is labeled as one.
+        </footer>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<nav class="presenter" aria-label="Presenter navigation">
+  <button id="btnPresent" title="Presentation mode — full screen, one section at a time" aria-label="Toggle presentation mode" aria-pressed="false">⛶</button>
+  <button id="presUp" title="Previous section (↑ / ←)" aria-label="Previous section">↑</button>
+  <span class="count" id="presCount">01 / 13</span>
+  <button id="presDown" title="Next section (↓ / → / Space)" aria-label="Next section">↓</button>
+  <span class="exit-hint">Esc to exit</span>
+</nav>
+
+<script>
+(function(){
+  "use strict";
+  var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- shared section list (hero + all 12 stops, in document order) ---------- */
+  var sections = Array.prototype.slice.call(document.querySelectorAll("main section[id]"));
+  var slideIds = sections.map(function(s){ return s.id; });
+  var links = {};
+  document.querySelectorAll(".rail-nav a").forEach(function(a){ links[a.getAttribute("href").slice(1)] = a; });
+  var counter = document.getElementById("railCounter");
+  var fill = document.getElementById("railFill");
+  var order = Object.keys(links);
+  var currentIdx = 0;
+
+  // Wrap each section's real content in .slide-inner (a plain, unstyled div
+  // outside presentation mode — nothing changes for normal reading) so that
+  // in presentation mode it can be vertically auto-centered independently of
+  // the section's own fixed/full-screen box, and give every direct child a
+  // .reveal marker for the presentation-mode stagger-in (inert without
+  // html.present-mode, so the page still shows everything at rest normally).
+  // A quiet slide-number watermark rides along outside the wrapper.
+  sections.forEach(function(sec, i){
+    var inner = document.createElement("div");
+    inner.className = "slide-inner";
+    while(sec.firstChild){ inner.appendChild(sec.firstChild); }
+    Array.prototype.forEach.call(inner.children, function(el){
+      if(el.nodeType===1) el.classList.add("reveal");
+    });
+    sec.appendChild(inner);
+    var num = document.createElement("div");
+    num.className = "slide-num";
+    num.setAttribute("aria-hidden", "true");
+    num.textContent = String(i).padStart(2, "0");
+    sec.appendChild(num);
+  });
+
+  /* ---------- presenter (arrow) navigation ---------- */
+  var presUp = document.getElementById("presUp");
+  var presDown = document.getElementById("presDown");
+  var presCount = document.getElementById("presCount");
+  var btnPresent = document.getElementById("btnPresent");
+
+  function updateRailActive(){
+    var id = slideIds[currentIdx];
+    Object.keys(links).forEach(function(k){ links[k].classList.toggle("active", k===id); });
+    var idx = order.indexOf(id);
+    if(idx>-1){
+      counter.textContent = "§ " + String(idx+1).padStart(2,"0") + " / " + order.length;
+      fill.style.width = Math.round(((idx+1)/order.length)*100) + "%";
+    }
+  }
+  function updatePresenterUI(){
+    presCount.textContent = String(currentIdx+1).padStart(2,"0") + " / " + slideIds.length;
+    presUp.disabled = currentIdx<=0;
+    presDown.disabled = currentIdx>=slideIds.length-1;
+  }
+  function render(){ updatePresenterUI(); updateRailActive(); }
+
+  /* ---------- presentation mode: full screen, one section at a time ---------- */
+  function isPresentMode(){ return document.documentElement.classList.contains("present-mode"); }
+  function showSlide(idx){
+    sections.forEach(function(s,i){ s.classList.toggle("current", i===idx); });
+    var cur = sections[idx];
+    cur.scrollTop = 0;
+    var inner = cur.querySelector(".slide-inner");
+    var items = Array.prototype.filter.call(inner.children, function(el){ return el.nodeType===1; });
+    items.forEach(function(el){ el.classList.remove("in"); });
+    // restart the stagger next frame so re-showing the same slide replays it
+    requestAnimationFrame(function(){
+      items.forEach(function(el,i){
+        if(reduced){ el.classList.add("in"); }
+        else{ setTimeout(function(){ el.classList.add("in"); }, i*90); }
+      });
+    });
+  }
+  function enterPresent(){
+    document.documentElement.classList.add("present-mode");
+    btnPresent.classList.add("active");
+    btnPresent.setAttribute("aria-pressed","true");
+    window.scrollTo(0,0);
+    showSlide(currentIdx);
+    try{
+      var el = document.documentElement;
+      var req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+      if(req){ var p = req.call(el); if(p && p.catch) p.catch(function(){}); }
+    }catch(e){ /* fullscreen blocked (e.g. embedded view) — slide layout still works */ }
+  }
+  function exitPresent(){
+    document.documentElement.classList.remove("present-mode");
+    btnPresent.classList.remove("active");
+    btnPresent.setAttribute("aria-pressed","false");
+    if(document.fullscreenElement){
+      try{ (document.exitFullscreen || function(){}).call(document); }catch(e){}
+    }
+  }
+  btnPresent.addEventListener("click", function(){ isPresentMode() ? exitPresent() : enterPresent(); });
+  document.addEventListener("fullscreenchange", function(){
+    if(!document.fullscreenElement && isPresentMode()) exitPresent();
+  });
+
+  // Which section is "current": the deepest one whose top has crossed a fixed
+  // line near the top of the viewport. Deterministic from actual scroll
+  // position — never guesses from a mid-scroll intersection event, which is
+  // what let short sections get skipped before.
+  function computeCurrentIndex(){
+    var line = window.innerHeight * 0.35;
+    var idx = 0;
+    for(var i=0;i<sections.length;i++){
+      if(sections[i].getBoundingClientRect().top <= line) idx = i;
+      else break;
+    }
+    return idx;
+  }
+
+  var scrollLocked = false, scrollLockTimer = null;
+  function goTo(idx){
+    idx = Math.max(0, Math.min(slideIds.length-1, idx));
+    currentIdx = idx;
+    render();
+    if(isPresentMode()){ showSlide(idx); return; }
+    scrollLocked = true;
+    if(scrollLockTimer) clearTimeout(scrollLockTimer);
+    document.getElementById(slideIds[idx]).scrollIntoView({behavior: reduced ? "auto" : "smooth", block:"start"});
+    // release the lock once the smooth-scroll has had time to finish, then
+    // resync (covers the case the browser clamped the scroll, e.g. last section)
+    scrollLockTimer = setTimeout(function(){ scrollLocked = false; syncFromScroll(); }, reduced ? 50 : 650);
+  }
+  function syncFromScroll(){
+    if(scrollLocked) return;
+    var idx = computeCurrentIndex();
+    if(idx !== currentIdx){ currentIdx = idx; render(); }
+  }
+  var scrollTicking = false;
+  window.addEventListener("scroll", function(){
+    if(scrollTicking) return;
+    scrollTicking = true;
+    requestAnimationFrame(function(){ scrollTicking = false; syncFromScroll(); });
+  }, {passive:true});
+  window.addEventListener("resize", syncFromScroll);
+
+  presUp.addEventListener("click", function(){ goTo(currentIdx-1); });
+  presDown.addEventListener("click", function(){ goTo(currentIdx+1); });
+  document.addEventListener("keydown", function(e){
+    var tag = (document.activeElement && document.activeElement.tagName) || "";
+    if(tag==="TEXTAREA" || tag==="INPUT" || tag==="BUTTON") return;
+    if(e.key==="ArrowDown" || e.key==="ArrowRight" || e.key==="PageDown" || e.key===" "){ e.preventDefault(); goTo(currentIdx+1); }
+    else if(e.key==="ArrowUp" || e.key==="ArrowLeft" || e.key==="PageUp"){ e.preventDefault(); goTo(currentIdx-1); }
+    else if(e.key==="Home"){ e.preventDefault(); goTo(0); }
+    else if(e.key==="End"){ e.preventDefault(); goTo(slideIds.length-1); }
+    else if(e.key==="Escape" && isPresentMode()){ e.preventDefault(); exitPresent(); }
+  });
+  render();
+
+  /* ---------- loop diagram ---------- */
+  var svgNs = "http://www.w3.org/2000/svg";
+  var nodesG = document.getElementById("loopNodes");
+  var pos = [ [130,34], [226,130], [130,226], [34,130] ];
+  var labels = ["Prompt","Reason","Act","Observe"];
+  var circles = [];
+  pos.forEach(function(p,i){
+    var g = document.createElementNS(svgNs,"g");
+    var c = document.createElementNS(svgNs,"circle");
+    c.setAttribute("cx",p[0]); c.setAttribute("cy",p[1]); c.setAttribute("r",22);
+    c.setAttribute("fill","var(--surface)"); c.setAttribute("stroke","var(--border-strong)"); c.setAttribute("stroke-width","2");
+    var t = document.createElementNS(svgNs,"text");
+    t.setAttribute("x",p[0]); t.setAttribute("y",p[1]+4); t.setAttribute("text-anchor","middle");
+    t.setAttribute("fill","var(--text-muted)"); t.textContent = i+1;
+    g.appendChild(c); g.appendChild(t);
+    nodesG.appendChild(g);
+    circles.push(c);
+  });
+  var arrow = document.createElementNS(svgNs,"path");
+  arrow.setAttribute("id","loopArrow");
+  arrow.setAttribute("fill","none"); arrow.setAttribute("stroke","var(--accent)"); arrow.setAttribute("stroke-width","3");
+  arrow.setAttribute("stroke-linecap","round");
+  nodesG.appendChild(arrow);
+  var arcs = [
+    "M 130 56 A 96 96 0 0 1 214 106",
+    "M 214 154 A 96 96 0 0 1 154 214",
+    "M 106 214 A 96 96 0 0 1 46 154",
+    "M 46 106 A 96 96 0 0 1 106 46"
+  ];
+  var steps = Array.prototype.slice.call(document.querySelectorAll(".loop-step"));
+  var stage = 0;
+  function renderStage(){
+    circles.forEach(function(c,i){
+      c.setAttribute("stroke", i===stage ? "var(--accent)" : "var(--border-strong)");
+      c.setAttribute("fill", i===stage ? "var(--accent-soft)" : "var(--surface)");
+    });
+    arrow.setAttribute("d", arcs[stage]);
+    steps.forEach(function(s){ s.classList.toggle("active", Number(s.dataset.i)===stage); });
+  }
+  renderStage();
+  var loopTimer;
+  function startLoop(){
+    if(reduced) return;
+    loopTimer = setInterval(function(){ stage = (stage+1)%4; renderStage(); }, 2200);
+  }
+  startLoop();
+  var loopWrap = document.querySelector(".loop-wrap");
+  loopWrap.addEventListener("mouseenter", function(){ clearInterval(loopTimer); });
+  loopWrap.addEventListener("mouseleave", startLoop);
+
+  /* ---------- context budget bar ---------- */
+  var budgetState = { files:"few", history:"fresh", mcp:"none" };
+  var colors = { system:"var(--text-faint)", rules:"var(--info)", files:"var(--accent)", history:"var(--warn)", mcp:"var(--bad)", free:"var(--good-soft)" };
+  var names = { system:"System & tools", rules:"CLAUDE.md + Skills", files:"Files read", history:"Conversation history", mcp:"MCP / tool results", free:"Headroom left" };
+  function computeBudget(){
+    var system = 8, rules = 7;
+    var files = budgetState.files==="many" ? 35 : 10;
+    var history = budgetState.history==="long" ? 30 : 5;
+    var mcp = budgetState.mcp==="included" ? 15 : 0;
+    var used = system+rules+files+history+mcp;
+    var free = Math.max(4, 100-used);
+    return {system:system, rules:rules, files:files, history:history, mcp:mcp, free:free};
+  }
+  function renderBudget(){
+    var b = computeBudget();
+    var bar = document.getElementById("budgetBar");
+    var legend = document.getElementById("budgetLegend");
+    bar.innerHTML = ""; legend.innerHTML = "";
+    Object.keys(b).forEach(function(k){
+      var seg = document.createElement("div");
+      seg.style.width = b[k] + "%";
+      seg.style.background = colors[k];
+      seg.title = names[k] + ": " + b[k] + "%";
+      bar.appendChild(seg);
+      var leg = document.createElement("span");
+      leg.innerHTML = '<i style="background:'+colors[k]+'"></i>' + names[k] + " · " + b[k] + "%";
+      legend.appendChild(leg);
+    });
+  }
+  renderBudget();
+  ["segFiles","segHistory","segMcp"].forEach(function(id, gi){
+    var group = document.getElementById(id);
+    var key = ["files","history","mcp"][gi];
+    group.querySelectorAll(".seg").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        group.querySelectorAll(".seg").forEach(function(b){ b.classList.remove("active"); });
+        btn.classList.add("active");
+        budgetState[key] = btn.dataset.val;
+        renderBudget();
+      });
+    });
+  });
+
+  /* ---------- prompt scorer ---------- */
+  var LESSONS = {
+    goal: ["Claude works best from a concrete target or problem, not a vague instruction — 'fix it' gives no starting point to investigate from.", "State what's broken or what outcome you want, in concrete terms."],
+    scope: ["Claude can investigate broad areas when appropriate, but for a narrow task, a defined starting point reduces unnecessary exploration.", "Name the affected file, directory, or component."],
+    investigation: ["Reading broadly before narrowing pulls unrelated code into context that a targeted search would have skipped entirely.", "Ask Claude to search/locate the relevant code first, then read only what matches."],
+    constraints: ["Without constraints, Claude has to guess what's safe to touch and what conventions to follow.", "Say what must not change, or what conventions to preserve."],
+    done: ["Without a definition of done, it's unclear when the task is actually finished or how to verify it.", "Add a 'Done when...' condition — e.g. tests pass, behavior confirmed."],
+    output: ["An unconstrained response can be longer or less focused than you need.", "Say what you want back — a summary, a table, a list of files."]
+  };
+  var WEAK = "Fix my project.";
+  var STRONG = "The login form in auth/login.py accepts an empty password when ‘remember me’ is checked — that’s the bug reported in reports/login-bug.md. Look at how auth/session.py issues tokens before you touch login.py, and don’t change the existing token format. Done when a request with an empty password and remember_me=true returns 400, and `pytest tests/test_auth.py` passes. Report back which function you changed and why.";
+
+  function scoreDims(text){
+    var t = text.trim();
+    var vague = /^(fix (it|this|my project)|help( me)?|make it work|it('?s| is) broken|do something)\.?$/i;
+    var d = {};
+    d.goal = t.length>=8 && !vague.test(t);
+    d.scope = /[\w-]+\.[a-z]{1,5}\b/i.test(t) || /`[^`]+`/.test(t) || /\b(folder|directory|component|module|package)\b/i.test(t);
+    if(/\b(search|find|locate|grep|look for|look at|check how)\b/i.test(t)) d.investigation = true;
+    else if(/\b(all files|every file|entire (project|codebase)|whole (project|codebase))\b/i.test(t) && !/\b(audit|security review|research|across)\b/i.test(t)) d.investigation = false;
+    else d.investigation = null;
+    d.constraints = /\b(don't|do not|must not|without changing|keep|preserve|backward.?compat)\b/i.test(t);
+    d.done = /\b(done when|tests? pass(es)?|should pass|verify|confirm|until)\b/i.test(t);
+    d.output = /\b(summary|list|table|diff|explain|only show|just (the|show)|report)\b/i.test(t);
+    return d;
+  }
+  function bandFor(score){
+    if(score>=90) return "EXCELLENT";
+    if(score>=75) return "GOOD";
+    if(score>=50) return "NEEDS IMPROVEMENT";
+    return "POOR";
+  }
+  var bandColor = { EXCELLENT:"good", GOOD:"good", "NEEDS IMPROVEMENT":"warn", POOR:"bad" };
+
+  function renderScore(text){
+    var d = scoreDims(text);
+    var score;
+    if(d.goal===false){ score = 20; }
+    else {
+      var applicable = Object.keys(d).filter(function(k){ return d[k]!==null; });
+      var present = applicable.filter(function(k){ return d[k]===true; }).length;
+      score = Math.round(present/applicable.length*100);
+    }
+    var band = bandFor(score);
+    document.getElementById("scoreNum").textContent = score;
+    document.getElementById("scoreNum").style.color = "var(--"+bandColor[band]+")";
+    var bandEl = document.getElementById("scoreBand");
+    bandEl.textContent = band;
+    bandEl.style.background = "var(--"+bandColor[band]+"-soft)";
+    bandEl.style.color = "var(--"+bandColor[band]+")";
+
+    var grid = document.getElementById("dimsGrid");
+    grid.innerHTML = "";
+    ["goal","scope","investigation","constraints","done","output"].forEach(function(key){
+      var val = d[key];
+      var wrap = document.createElement("div");
+      wrap.className = "dim";
+      var pillClass = val===true ? "present" : (val===false ? "missing" : "na");
+      var pillText = val===true ? "Present" : (val===false ? "Missing" : "Not applicable");
+      wrap.innerHTML =
+        '<div class="row"><span class="name">'+key+'</span><span class="pill '+pillClass+'">'+pillText+'</span></div>'+
+        '<div class="why">'+LESSONS[key][0]+' <strong>Try:</strong> '+LESSONS[key][1]+'</div>';
+      if(val!==true){
+        wrap.style.cursor = "pointer";
+        wrap.addEventListener("click", function(){ wrap.classList.toggle("show-why"); });
+      }
+      grid.appendChild(wrap);
+    });
+  }
+  var input = document.getElementById("promptInput");
+  input.addEventListener("input", function(){ renderScore(input.value); });
+  document.getElementById("btnWeak").addEventListener("click", function(){ input.value = WEAK; renderScore(WEAK); });
+  document.getElementById("btnStrong").addEventListener("click", function(){ input.value = STRONG; renderScore(STRONG); });
+  renderScore(input.value);
+
+  /* ---------- levers ---------- */
+  var ruleFull = "Rule to enforce → hook. Contextual know-how → Skill. Delegation → Agent. Always-on guidance → CLAUDE.md. This task → prompt.";
+  var ruleFocus = {
+    hook: "Rule to enforce → <strong>hook</strong>.",
+    skill: "Contextual know-how → <strong>Skill</strong>.",
+    agent: "Delegation → <strong>Agent</strong>.",
+    claudemd: "Always-on guidance → <strong>CLAUDE.md</strong>.",
+    prompt: "This task → <strong>prompt</strong>."
+  };
+  var chips = document.querySelectorAll("#leverChips .chip");
+  var levers = document.querySelectorAll(".lever");
+  var ruleStrip = document.getElementById("ruleStrip");
+  chips.forEach(function(chip){
+    chip.addEventListener("click", function(){
+      var target = chip.dataset.lever;
+      var wasActive = chip.classList.contains("active");
+      chips.forEach(function(c){ c.classList.remove("active"); });
+      levers.forEach(function(l){ l.classList.remove("hit"); });
+      if(wasActive){
+        ruleStrip.innerHTML = ruleFull;
+        return;
+      }
+      chip.classList.add("active");
+      document.querySelector('.lever[data-lever="'+target+'"]').classList.add("hit");
+      ruleStrip.innerHTML = ruleFocus[target];
+    });
+  });
+
+  /* ---------- myths ---------- */
+  var myths = [
+    ["More context always helps.", "Relevant context helps; irrelevant context dilutes focus — the whole throughline of this workshop."],
+    ["Longer prompts are better prompts.", "Good prompts reduce ambiguity, not necessarily length."],
+    ["/compact erases your progress.", "It continues the same task with less baggage — it doesn't erase anything."],
+    ["Every repeated task needs a custom Agent.", "A Skill packages a repeatable workflow; an Agent is for delegated, independent investigation. Different problems, different levers."],
+    ["If Claude wrote it, it's done.", "Implementation is not completion — a change without a check is not yet a finished change."]
+  ];
+  var mythList = document.getElementById("mythList");
+  myths.forEach(function(pair){
+    var card = document.createElement("div");
+    card.className = "myth";
+    card.innerHTML =
+      '<div class="face myth-face"><span class="tag m">MYTH</span><span style="font-size:.9rem;">'+pair[0]+'</span></div>'+
+      '<div class="face reality"><span class="tag r">REALITY</span><span style="font-size:.9rem;">'+pair[1]+'</span></div>'+
+      '<div class="myth-hint">click to reveal</div>';
+    card.addEventListener("click", function(){ card.classList.toggle("open"); });
+    mythList.appendChild(card);
+  });
+
+})();
+</script>
