@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -253,6 +254,62 @@ class TestHookInstaller(unittest.TestCase):
         hook_installer.install_hooks(self.settings_path)
         leftovers = list(self.settings_path.parent.glob(".coach_settings_*"))
         self.assertEqual(leftovers, [])
+
+
+class TestHookInstallerFrozen(unittest.TestCase):
+    """A packaged build must never write a hook Claude Code can't actually
+    invoke — sys.executable there is this app's own GUI exe, and this
+    module's own __file__ resolves inside a temp dir PyInstaller deletes on
+    exit (see hook_installer.py's module docstring). These simulate
+    `sys.frozen` rather than actually freezing a build in the test suite."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.settings_path = Path(self._tmpdir.name) / "settings.json"
+        self._frozen_exe = Path(self._tmpdir.name) / "app" / "ClaudeCodeCoach.exe"
+        self._frozen_exe.parent.mkdir(parents=True, exist_ok=True)
+        self._patches = [
+            unittest.mock.patch.object(sys, "frozen", True, create=True),
+            unittest.mock.patch.object(sys, "executable", str(self._frozen_exe)),
+        ]
+        for p in self._patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self._patches:
+            p.stop()
+        self._tmpdir.cleanup()
+
+    def test_frozen_command_is_the_companion_exe_not_this_gui_exe(self):
+        command, args = hook_installer.hook_command()
+        self.assertNotEqual(command, str(self._frozen_exe))
+        self.assertTrue(command.endswith("hook_receiver.exe"))
+        self.assertEqual(args, [])
+
+    def test_frozen_receiver_path_is_derived_from_the_exe_not_this_module(self):
+        # The bug this guards against: deriving the receiver path from this
+        # *module's* __file__ (as source mode does) would, under a frozen
+        # --onefile build, point inside a per-run PyInstaller extraction dir
+        # that's deleted the moment this process exits. Deriving it from
+        # sys.executable's own (persistent, installed) location instead
+        # means the same path comes back every time, computed independently
+        # by install/uninstall/status at completely different moments.
+        expected = self._frozen_exe.parent / "hook_receiver" / "hook_receiver.exe"
+        first, _ = hook_installer.hook_command()
+        second, _ = hook_installer.hook_command()
+        self.assertEqual(first, str(expected))
+        self.assertEqual(first, second)
+
+    def test_install_and_uninstall_agree_when_frozen(self):
+        hook_installer.install_hooks(self.settings_path)
+        self.assertTrue(hook_installer.hooks_installed_in(self.settings_path))
+        data = json.loads(self.settings_path.read_text(encoding="utf-8"))
+        stop_hooks = [h for group in data["hooks"]["Stop"] for h in group["hooks"]]
+        self.assertTrue(any(h.get("command", "").endswith("hook_receiver.exe") for h in stop_hooks))
+        self.assertTrue(all(h.get("args") == [] for h in stop_hooks if "hook_receiver.exe" in h.get("command", "")))
+
+        hook_installer.uninstall_hooks(self.settings_path)
+        self.assertFalse(hook_installer.hooks_installed_in(self.settings_path))
 
 
 class TestRuntimeAnalyzerBasics(unittest.TestCase):

@@ -36,6 +36,17 @@ Runtime coaching (V4) is **off until you turn it on**: open **Sessions** →
 The Skill/Agent Creators (V5) never write a file until you explicitly press
 **Save to Project** — pick a project folder first (Environment or Settings).
 
+### Prefer a standalone build (no Python required)?
+
+```powershell
+.\packaging\build.ps1
+```
+
+Builds `dist\ClaudeCodeCoach\ClaudeCodeCoach.exe` — same icon as the VS Code
+extension, no Python install needed to run it. See [packaging/README.md](packaging/README.md)
+for what it produces and why the Runtime Hooks feature needed a real code
+change (not just a build-script trick) to keep working once packaged.
+
 ## What's new in V5: Workflow Coach
 
 V4 answered "what is Claude Code doing right now?" V5 answers "given what
